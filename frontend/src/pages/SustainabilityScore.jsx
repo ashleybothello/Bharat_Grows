@@ -1,8 +1,11 @@
 import React from 'react';
 import { Leaf, Award, Globe, Wind, Droplets, Zap, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
 
 export default function SustainabilityScore() {
+    const { t } = useLang();
     const metrics = [
         { title: 'Carbon Sequestered', value: '4.2', unit: 'Tonnes', icon: <Wind size={24} color="#10B981" />, color: '#D1FAE5' },
         { title: 'Synthetic Fertilizer Cut', value: '35', unit: '%', icon: <Leaf size={24} color="#F59E0B" />, color: '#FEF3C7' },
@@ -11,30 +14,15 @@ export default function SustainabilityScore() {
     ];
 
     return (
-        <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <div style={{ background: 'linear-gradient(135deg, #10B981, #059669)', padding: '0.6rem', borderRadius: '0.75rem', color: 'white' }}>
-                        <Award size={28} />
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-                            Regenerative Farm Audit
-                        </h1>
-                        <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-                            Track sustainability metrics, carbon credits, and environmental impact
-                        </p>
-                    </div>
-                </div>
-            </div>
+        <div className="farm-page">
+            <PageHeader kicker={t.pg_more_esg} title={t.pg_more_esg} lede={t.pg_more_esg_d} />
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
 
                 {/* Main Score */}
                 <div style={{ background: 'linear-gradient(135deg, #14532D, #166534)', borderRadius: '1rem', padding: '2rem', color: 'white', textAlign: 'center', boxShadow: '0 8px 25px rgba(22, 101, 52, 0.3)' }}>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(255,255,255,0.15)', padding: '0.3rem 0.8rem', borderRadius: '2rem', fontSize: '0.75rem', fontWeight: 800, marginBottom: '1rem' }}>
-                        <ShieldCheck size={14} /> KrishiMitra ESG Rating
+                        <ShieldCheck size={14} /> भारतGrows ESG Rating
                     </div>
                     <div style={{ fontSize: '5rem', fontWeight: 900, lineHeight: 1 }}>A-</div>
                     <p style={{ fontSize: '1rem', fontWeight: 700, margin: '1rem 0' }}>Outstanding Environmental Stewardship</p>

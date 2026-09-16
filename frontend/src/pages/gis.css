@@ -1,0 +1,589 @@
+html[dir="rtl"] .gis-page {
+  --gis-slide: -1;
+}
+
+.gis-page {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  background: #0e1a12;
+  overflow: hidden;
+}
+
+.gis-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.gis-canvas.leaflet-container,
+.gis-canvas .leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #122016;
+  font-family: var(--font-ui);
+}
+
+.gis-canvas .leaflet-control-zoom a {
+  background: #faf7f0;
+  color: #141c16;
+  border: 0;
+  width: 34px;
+  height: 34px;
+  line-height: 34px;
+  font-size: 16px;
+}
+
+.gis-canvas .leaflet-bar {
+  border: 1px solid rgba(20, 28, 22, 0.16);
+  box-shadow: 0 10px 24px rgba(8, 14, 10, 0.28);
+}
+
+.gis-canvas .leaflet-control-attribution {
+  background: rgba(14, 26, 18, 0.78);
+  color: rgba(246, 241, 231, 0.7);
+  font-size: 10px;
+  max-width: min(52vw, 420px);
+}
+
+.gis-canvas .leaflet-control-attribution a {
+  color: #f4e6c8;
+}
+
+.gis-tip {
+  background: #0e1a12;
+  color: #f6f1e7;
+  border: 0;
+  border-radius: 4px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+  font-family: var(--font-ui);
+}
+
+.gis-rail {
+  position: absolute;
+  top: 1rem;
+  z-index: 20;
+  width: min(300px, calc(100vw - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+  background: rgba(250, 247, 240, 0.88);
+  color: var(--ink);
+  border: 1px solid rgba(20, 28, 22, 0.12);
+  box-shadow: 0 12px 28px rgba(8, 14, 10, 0.18);
+  padding: 1rem 1rem 1.1rem;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  scrollbar-width: thin;
+}
+
+.gis-rail-left {
+  inset-inline-start: 1rem;
+}
+
+.gis-rail-right {
+  inset-inline-end: 1rem;
+  width: min(276px, calc(100vw - 2rem));
+  max-height: calc(100% - 8.5rem);
+}
+
+.gis-rail-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.gis-close-mobile {
+  display: none;
+}
+
+.gis-rail-head h1 {
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  letter-spacing: -0.03em;
+  margin: 0.15rem 0 0.4rem;
+  line-height: 1.1;
+}
+
+.gis-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--leaf);
+}
+
+.gis-rail-head p,
+.gis-rail p {
+  margin: 0;
+  color: var(--sage);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.gis-rail section {
+  margin-top: 1.15rem;
+}
+
+.gis-rail h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sage);
+  margin: 0 0 0.45rem;
+}
+
+.gis-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0.45rem 0.6rem;
+}
+
+.gis-search input {
+  border: 0;
+  width: 100%;
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+  outline: none;
+}
+
+.gis-suggest {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.gis-suggest button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gis-suggest button:hover,
+.gis-opt:hover {
+  background: var(--cream);
+}
+
+.gis-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0.1rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.gis-opt input {
+  accent-color: var(--leaf);
+}
+
+.gis-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.gis-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+}
+
+.gis-legend span,
+.gis-soil span {
+  width: 0.85rem;
+  height: 0.85rem;
+  display: inline-block;
+  border: 1px solid rgba(20, 28, 22, 0.2);
+  flex-shrink: 0;
+}
+
+.gis-src {
+  margin-top: 0.55rem !important;
+  font-size: 0.72rem !important;
+  line-height: 1.4 !important;
+}
+
+.gis-india,
+.gis-analyze,
+.gis-close,
+.gis-india-float,
+.gis-fab,
+.gis-chip-clear,
+.gis-crumb button,
+.gis-crops button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.gis-india,
+.gis-analyze,
+.gis-india-float,
+.gis-fab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.7rem;
+  font-weight: 650;
+}
+
+.gis-analyze {
+  margin-top: 0.9rem;
+  background: var(--forest);
+  color: #f6f1e7;
+  border-color: var(--forest);
+  width: 100%;
+  justify-content: center;
+}
+
+.gis-sat-link {
+  margin-top: 0.5rem;
+  background: #fff;
+  color: var(--forest);
+  border-color: var(--forest);
+}
+
+.gis-sat-back {
+  margin: 0 0 0.9rem;
+  text-decoration: none;
+}
+
+.sat-live-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  background: rgba(14, 26, 18, 0.72);
+  color: #f6f1e7;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  position: absolute;
+  inset-inline-end: 1rem;
+  top: 0.75rem;
+}
+
+.gis-empty {
+  margin-top: 1.2rem;
+  color: var(--sage);
+}
+
+.gis-empty h2,
+.gis-place h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  margin: 0.25rem 0 0.35rem;
+}
+
+.gis-place {
+  position: relative;
+  margin-top: 0.9rem;
+}
+
+.gis-place header p:first-child {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--leaf);
+}
+
+.gis-close {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.gis-close.gis-close-mobile {
+  display: none;
+}
+
+.gis-place .gis-close {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+}
+
+.gis-region {
+  margin: 0.35rem 0 0.8rem !important;
+}
+
+.gis-place h3 {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sage);
+  margin: 0.9rem 0 0.4rem;
+}
+
+.gis-soil {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 650;
+  color: var(--ink) !important;
+}
+
+.gis-place dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.7rem 0 0;
+}
+
+.gis-place dt {
+  font-size: 0.72rem;
+  color: var(--sage);
+}
+
+.gis-place dd {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.gis-note {
+  margin-top: 0.65rem !important;
+}
+
+.gis-crops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.gis-crops li {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.gis-crops button {
+  padding: 0.22rem 0.5rem;
+  font-size: 0.84rem;
+}
+
+.gis-crops button:hover,
+.gis-chip-clear:hover,
+.gis-crumb button:hover,
+.gis-india-float:hover,
+.gis-fab:hover {
+  background: var(--cream);
+}
+
+.gis-chip-clear {
+  margin-top: 0.45rem;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.gis-legend-note {
+  margin: 0.45rem 0 0.25rem !important;
+  font-size: 0.75rem !important;
+}
+
+.gis-legend-crops {
+  max-height: 8.5rem;
+  overflow: auto;
+}
+
+.gis-crumb {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sage);
+  padding-inline-end: 2.2rem;
+}
+
+.gis-crumb button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-weight: 700;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--leaf);
+}
+
+.gis-crumb .gis-close {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+}
+
+.gis-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 22;
+  pointer-events: none;
+}
+
+.gis-chrome > * {
+  pointer-events: auto;
+}
+
+.gis-canvas .leaflet-bottom.leaflet-right {
+  inset-inline-end: calc(276px + 1.15rem);
+  right: auto;
+  bottom: 0.75rem;
+}
+
+.gis-india-float {
+  position: absolute;
+  inset-inline-end: calc(276px + 5.4rem);
+  bottom: 0.75rem;
+  background: rgba(250, 247, 240, 0.92);
+  box-shadow: 0 8px 20px rgba(8, 14, 10, 0.18);
+}
+
+.gis-fabs {
+  display: none;
+}
+
+.gis-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: rgba(250, 247, 240, 0.92);
+  color: var(--ink);
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 860px) {
+  .gis-page {
+    margin: 0;
+    padding: 0;
+  }
+
+  .gis-close.gis-close-mobile {
+    display: grid;
+  }
+
+  .gis-rail-left,
+  .gis-rail-right {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  }
+
+  .gis-rail-left {
+    inset-inline-start: 0.75rem;
+    top: 0.75rem;
+    width: min(320px, calc(100vw - 1.5rem));
+    max-height: calc(100% - 7.4rem);
+    transform: translateX(calc(-0.6rem * var(--gis-slide, 1)));
+  }
+
+  .gis-rail-right {
+    inset-inline: 0.75rem;
+    top: auto;
+    bottom: 5.7rem;
+    width: auto;
+    max-height: 44vh;
+    transform: translateY(0.6rem);
+  }
+
+  .gis-rail-left.is-open,
+  .gis-rail-right.is-open {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+    transform: none;
+  }
+
+  .gis-fabs {
+    display: flex;
+    position: absolute;
+    inset-inline-start: 0.75rem;
+    bottom: 5.7rem;
+    gap: 0.4rem;
+  }
+
+  .gis-page:has(.gis-rail-left.is-open) .gis-fabs,
+  .gis-page:has(.gis-rail-right.is-open) .gis-fabs,
+  .gis-page:has(.gis-rail-right.is-open) .gis-india-float {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .gis-fab {
+    background: rgba(250, 247, 240, 0.94);
+    box-shadow: 0 8px 18px rgba(8, 14, 10, 0.18);
+    font-size: 0.82rem;
+  }
+
+  .gis-fab.is-active {
+    background: var(--forest);
+    color: #f6f1e7;
+    border-color: var(--forest);
+  }
+
+  .gis-india-float {
+    inset-inline-end: 3.4rem;
+    bottom: 5.7rem;
+    padding: 0.38rem 0.6rem;
+    font-size: 0.8rem;
+  }
+
+  .gis-canvas .leaflet-bottom.leaflet-right,
+  .gis-banner {
+    inset-inline-end: 0.65rem;
+    right: auto;
+    bottom: 5.4rem;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 1100px) {
+  .gis-rail-left,
+  .gis-rail-right {
+    width: min(250px, calc(50vw - 1.5rem));
+  }
+
+  .gis-canvas .leaflet-bottom.leaflet-right {
+    inset-inline-end: calc(250px + 1.15rem);
+    right: auto;
+  }
+
+  .gis-india-float {
+    inset-inline-end: calc(250px + 5.4rem);
+  }
+}

@@ -1,255 +1,615 @@
-import React, { useEffect, useState } from 'react';
-import { Cpu, Activity, RefreshCw, AlertTriangle, ShieldCheck, BatteryCharging, Signal, Droplets, Sun, Gauge } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import axios from 'axios';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Activity, AlertTriangle, CloudRain, Cpu, Droplets, Flame, Leaf,
+  Radio, RotateCcw, Sun, Thermometer, Waves, X,
+} from 'lucide-react';
+import {
+  CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import DataBadge from '../components/DataBadge';
+import PageHeader from '../components/PageHeader';
+import { useAuth } from '../context/AuthContext';
+import { useLang } from '../context/LanguageContext';
+import {
+  clearAnomaly,
+  fetchNode,
+  fetchNodes,
+  fetchTelemetryTrends,
+  telemetryErrorMessage,
+  triggerAnomaly,
+} from '../utils/telemetry';
+import { completeAction, emitPageGone, emitPageReady, setUiContext, subscribeSaathi } from '../utils/saathi/bus';
+import { localeFor } from '../utils/i18n-catalog';
+import { qualityLabel } from './dashboard/helpers';
 
-const BACKEND_URL = 'http://localhost:5005';
-
-const MOCK_IOT_DATA = {
-  success: true,
-  sensors: [
-    { id: 'NODE-01', type: 'Soil Moisture Sensor', location: 'North Field, Zone A', value: 42, unit: '%', battery: 87, status: 'Normal' },
-    { id: 'NODE-02', type: 'Soil Temperature Probe', location: 'North Field, Zone A', value: 28.6, unit: '°C', battery: 79, status: 'Normal' },
-    { id: 'NODE-03', type: 'Atmospheric Humidity', location: 'Central Field', value: 68, unit: '%', battery: 91, status: 'Normal' },
-    { id: 'NODE-04', type: 'NPK Electrochemical Sensor', location: 'South Parcel', battery: 73, status: 'Calibrating', n: 145, p: 38, k: 204 },
-    { id: 'NODE-05', type: 'Leaf Wetness Sensor', location: 'East Bund', value: 0, unit: '(Dry)', battery: 95, status: 'Healthy' },
-    { id: 'NODE-06', type: 'Solar Radiation Pyranometer', location: 'Weather Station', value: 624, unit: 'W/m²', battery: 100, status: 'Normal' },
-  ],
-  alerts: [
-    { id: 1, severity: 'warning', message: 'Zone A moisture below 40% — drip irrigation recommended', timestamp: '08:14 AM' },
-    { id: 2, severity: 'info', message: 'NPK Node-04 calibration complete. New K reading: 204 mg/kg', timestamp: '07:50 AM' },
-    { id: 3, severity: 'ok', message: 'All 6 sensor nodes online. LoRaWAN uptime: 99.8%', timestamp: '07:00 AM' },
-  ]
+const RANGES = ['1d', '1w', '1m', '1y'];
+const GRAPH_SENSORS = [
+  'nitrogen', 'phosphorus', 'potassium', 'soil_moisture',
+  'temperature', 'humidity', 'light', 'rain', 'water_level',
+];
+const CRITICAL_PIN = {
+  nitrogen: 7,
+  phosphorus: 3,
+  potassium: 6,
+  soil_moisture: 12,
+  temperature: 8,
+  humidity: 12,
+  light: 40,
+  water_level: 15,
+  flame: 1,
+};
+const SENSOR_ICONS = {
+  nitrogen: Leaf,
+  phosphorus: Leaf,
+  potassium: Leaf,
+  soil_moisture: Droplets,
+  temperature: Thermometer,
+  humidity: CloudRain,
+  light: Sun,
+  rain: CloudRain,
+  water_level: Waves,
+  flame: Flame,
+  pir: Activity,
 };
 
-export default function IoTTelemetry() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [historyChart, setHistoryChart] = useState([]);
-  const [liveStream, setLiveStream] = useState(true);
+function healthClass(health) {
+  if (health === 'CRITICAL') return 'is-critical';
+  if (health === 'BAD' || health === 'AVERAGE') return 'is-watch';
+  if (health === 'GOOD') return 'is-good';
+  return 'is-unknown';
+}
 
-  const fetchTelemetry = async () => {
+function formatTime(iso, lang) {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString(localeFor(lang), {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  });
+}
+
+function sensorLabel(key, catalogue, t) {
+  const found = catalogue.find((s) => s.key === key);
+  if (found?.label) return found.label;
+  return t[`pg_sensor_${key}`] || key;
+}
+
+function padNode(n) {
+  return String(n).padStart(2, '0');
+}
+
+function notificationNotice(result, t) {
+  const smsOk = Boolean(result?.notifications?.sms?.sent);
+  const emailOk = Boolean(result?.notifications?.email?.sent);
+  if (smsOk && emailOk) return t.pg_map_alert_both;
+  if (smsOk) return t.pg_map_alert_sms_only;
+  if (emailOk) return t.pg_map_alert_email_only;
+  return t.pg_map_alert_neither;
+}
+
+export default function IoTTelemetry() {
+  const { t, lang } = useLang();
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const [pack, setPack] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState(null);
+  const [range, setRange] = useState('1d');
+  const [sensor, setSensor] = useState('nitrogen');
+  const [series, setSeries] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [anomalyNode, setAnomalyNode] = useState('');
+  const [anomalySensor, setAnomalySensor] = useState('nitrogen');
+  const [panelTab, setPanelTab] = useState('live');
+  const [layer, setLayer] = useState('field');
+
+  const load = useCallback(async () => {
     try {
-      const res = await axios.get(`${BACKEND_URL}/api/iot/telemetry`);
-      if (res.data?.success) {
-        setData(res.data);
-        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const moistureVal = res.data.sensors.find(s => s.type.includes('Moisture'))?.value || 45;
-        const tempVal = res.data.sensors.find(s => s.type.includes('Temp'))?.value || 29;
-        setHistoryChart(prev => {
-          const updated = [...prev, { time: timeStr, moisture: moistureVal, temp: tempVal }];
-          return updated.slice(-10);
-        });
-      } else {
-        if (!data) setData(MOCK_IOT_DATA);
-      }
+      const data = await fetchNodes();
+      setPack(data);
+      setError('');
     } catch (err) {
-      console.warn('Backend unavailable — using demo IoT data.');
-      if (!data) {
-        setData(MOCK_IOT_DATA);
-        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        setHistoryChart([{ time: now, moisture: 42, temp: 28.6 }]);
-      }
+      setError(telemetryErrorMessage(err, t));
     } finally {
       setLoading(false);
     }
-  };
+  }, [t]);
 
   useEffect(() => {
-    fetchTelemetry();
-    const interval = setInterval(() => {
-      if (liveStream) {
-        fetchTelemetry();
-      }
-    }, 4000); // 4 sec stream interval
+    load();
+  }, [load]);
 
-    return () => clearInterval(interval);
-  }, [liveStream]);
+  useEffect(() => {
+    if (error === t.pg_map_auth) return undefined;
+    const timer = window.setInterval(load, 10000);
+    return () => window.clearInterval(timer);
+  }, [load, error, t.pg_map_auth]);
+
+  const onSignInAgain = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
+
+  const nodes = pack?.nodes || [];
+  const catalogue = pack?.sensorCatalogue || [];
+  const coverage = pack?.coverage;
+  const farm = pack?.farm;
+  const tally = pack?.tally || {};
+  const healthy = tally.GOOD || 0;
+  const warning = (tally.AVERAGE || 0) + (tally.BAD || 0);
+  const critical = tally.CRITICAL || 0;
+
+  useEffect(() => {
+    if (!nodes.length) return;
+    setAnomalyNode((current) => {
+      if (current && nodes.some((n) => n.nodeId === current)) return current;
+      const third = nodes.find((n) => n.nodeNumber === 3) || nodes[0];
+      return third.nodeId;
+    });
+    setSelectedId((current) => {
+      if (current && nodes.some((n) => n.nodeId === current)) return current;
+      const hot = nodes.find((n) => n.health === 'CRITICAL');
+      return (hot || nodes[0]).nodeId;
+    });
+  }, [nodes]);
+
+  const selected = useMemo(
+    () => nodes.find((n) => n.nodeId === selectedId) || null,
+    [nodes, selectedId],
+  );
+
+  const packRef = useRef(nodes);
+  packRef.current = nodes;
+
+  useEffect(() => {
+    setUiContext({
+      selectedNode: selected ? { nodeId: selected.nodeId, nodeNumber: selected.nodeNumber, zone: selected.zone, health: selected.health } : null,
+    });
+  }, [selected]);
+
+  useEffect(() => {
+    emitPageReady('map');
+    const handle = async (action) => {
+      const started = Date.now();
+      while (!(packRef.current || []).length && Date.now() - started < 8000) {
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      const list = packRef.current || [];
+      const node = list.find((n) => Number(n.nodeNumber) === Number(action.nodeNumber));
+      if (!node) {
+        completeAction(action.id, { ok: false, type: action.type, error: 'missing_node' });
+        return;
+      }
+      setSelectedId(node.nodeId);
+      if (action.type === 'showNodeAnomaly') setPanelTab('live');
+      completeAction(action.id, {
+        ok: true,
+        type: action.type,
+        nodeId: node.nodeId,
+        nodeNumber: node.nodeNumber,
+        health: node.health,
+        zone: node.zone,
+      });
+    };
+    const unsub = subscribeSaathi(['selectNode', 'showNodeDetails', 'showNodeAnomaly'], handle);
+    return () => {
+      unsub();
+      emitPageGone('map');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setSeries(null);
+      setDetail(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [trend, node] = await Promise.all([
+          fetchTelemetryTrends({ sensor, range, nodeId: selectedId }),
+          fetchNode(selectedId),
+        ]);
+        if (!cancelled) {
+          setSeries(trend);
+          setDetail(node);
+        }
+      } catch {
+        if (!cancelled) setSeries(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedId, sensor, range, pack?.nodes]);
+
+  const gradedSensors = useMemo(
+    () => catalogue.filter((s) => CRITICAL_PIN[s.key] != null),
+    [catalogue],
+  );
+
+  const onAnomaly = async () => {
+    const target = nodes.find((n) => n.nodeId === anomalyNode) || nodes[0];
+    if (!target || busy) return;
+    const pin = CRITICAL_PIN[anomalySensor] ?? 7;
+    setBusy(true);
+    setNotice('');
+    try {
+      const result = await triggerAnomaly({
+        nodeId: target.nodeId,
+        sensor: anomalySensor,
+        value: pin,
+        ticks: 90,
+      });
+      setSelectedId(target.nodeId);
+      setPanelTab('live');
+      setNotice(notificationNotice(result, t));
+      await load();
+    } catch (err) {
+      setNotice(telemetryErrorMessage(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRestore = async () => {
+    const targetId = selectedId || anomalyNode;
+    if (!targetId || busy) return;
+    setBusy(true);
+    try {
+      const result = await clearAnomaly(targetId);
+      setNotice(result.message);
+      await load();
+    } catch (err) {
+      setNotice(telemetryErrorMessage(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const criticalReasons = Object.values(selected?.sensors || {})
+    .filter((item) => item.status === 'CRITICAL')
+    .map((item) => item.label);
 
   return (
-    <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+    <div className="farm-page farm-map-page">
+      <PageHeader
+        kicker={t.nav_map}
+        title={t.pg_map_h}
+        lede={t.pg_iot_sim}
+        tools={(
+          <>
+            <DataBadge kind="demo" />
+            <Link to="/beta" className="farm-ghost-btn">
+              <Cpu size={15} /> {t.pg_iot_beta}
+            </Link>
+          </>
+        )}
+      />
 
-      {/* Page Title Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <div style={{ background: '#E3F2FD', padding: '0.5rem', borderRadius: '0.6rem' }}>
-              <Cpu size={26} color="#1565C0" />
+      {loading && <div className="skel" style={{ height: 420 }} />}
+
+      {!loading && error && (
+        <p className="az-error farm-map-error" role="alert">
+          {error}
+          {error === t.pg_map_auth ? (
+            <button type="button" className="btn-secondary" onClick={onSignInAgain}>{t.login_h1}</button>
+          ) : (
+            <button type="button" className="btn-secondary" onClick={load}>{t.pg_hist_retry}</button>
+          )}
+        </p>
+      )}
+
+      {!loading && (
+        <>
+          <section className="farm-map-stats" aria-label={t.pg_dash_nodes}>
+            <article className="farm-stat">
+              <span className="farm-stat-ico" aria-hidden>▣</span>
+              <div>
+                <strong className="tabular">{nodes.length}</strong>
+                <p>{t.pg_map_active}</p>
+                <em>
+                  {coverage?.totalNodes
+                    ? t.pg_map_of_possible.replace('{n}', String(coverage.totalNodes))
+                    : farm?.sizeLabel || ''}
+                </em>
+              </div>
+            </article>
+            <article className="farm-stat is-good">
+              <span className="farm-stat-dot is-good" />
+              <div>
+                <strong className="tabular">{healthy}</strong>
+                <p>{t.pg_dash_healthy}</p>
+                <em>{t.pg_map_legend_good}</em>
+              </div>
+            </article>
+            <article className="farm-stat is-watch">
+              <span className="farm-stat-dot is-watch" />
+              <div>
+                <strong className="tabular">{warning}</strong>
+                <p>{t.pg_dash_warning}</p>
+                <em>{t.pg_map_legend_watch}</em>
+              </div>
+            </article>
+            <article className="farm-stat is-critical">
+              <span className="farm-stat-dot is-critical" />
+              <div>
+                <strong className="tabular">{critical}</strong>
+                <p>{t.pg_dash_critical}</p>
+                <em>{t.pg_map_legend_crit}</em>
+              </div>
+            </article>
+            <article className="farm-stat">
+              <span className="farm-stat-ico" aria-hidden>▦</span>
+              <div>
+                <strong>{farm?.sizeLabel || `${farm?.areaSqMetres || '—'} m²`}</strong>
+                <p>{t.pg_map_area}</p>
+                <em>{farm?.areaSqMetres ? `~ ${Number(farm.areaSqMetres).toLocaleString()} m²` : t.pg_map_coverage}</em>
+              </div>
+            </article>
+            <div className="farm-stat-actions">
+              <select
+                className="az-select"
+                value={anomalyNode}
+                onChange={(e) => setAnomalyNode(e.target.value)}
+                aria-label={t.pg_map_pick_node}
+              >
+                {nodes.map((node) => (
+                  <option key={node.nodeId} value={node.nodeId}>
+                    {t.pg_map_node} {padNode(node.nodeNumber)}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="az-select"
+                value={anomalySensor}
+                onChange={(e) => setAnomalySensor(e.target.value)}
+                aria-label={t.pg_map_pick_sensor}
+              >
+                {(gradedSensors.length ? gradedSensors : [{ key: 'nitrogen', label: t.analyze_nitrogen }]).map((item) => (
+                  <option key={item.key} value={item.key}>{item.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn-primary map-anomaly-btn"
+                onClick={onAnomaly}
+                disabled={!nodes.length}
+                aria-busy={busy}
+              >
+                <AlertTriangle size={16} />
+                {busy ? t.pg_export_generating : t.pg_map_simulate}
+              </button>
             </div>
+          </section>
+          {notice && <p className="az-error" role="status">{notice}</p>}
+
+          <div className={`farm-map-stage${selected ? ' has-panel' : ''}`}>
+            <section className="farm-canvas" aria-label={t.pg_map_h} data-layer={layer}>
+              <div className="farm-canvas-tools">
+                <div className="farm-layer-tabs" role="tablist">
+                  <button type="button" role="tab" className={layer === 'field' ? 'is-active' : ''} onClick={() => setLayer('field')}>
+                    {t.pg_map_tab_field}
+                  </button>
+                  <button type="button" role="tab" className={layer === 'grid' ? 'is-active' : ''} onClick={() => setLayer('grid')}>
+                    {t.pg_map_tab_grid}
+                  </button>
+                </div>
+                <Link to="/app/satellite" className="farm-ghost-btn farm-sat-link">{t.nav_satellite}</Link>
+              </div>
+
+              <div className="farm-field">
+                <img
+                  className="farm-aerial"
+                  src="/farm-aerial.png"
+                  alt={t.pg_map_h}
+                />
+                {layer === 'grid' ? <div className="farm-plots" aria-hidden /> : null}
+
+                <div className="farm-plot">
+                  {nodes.map((node) => (
+                    <button
+                      key={node.nodeId}
+                      type="button"
+                      className={`map-node ${healthClass(node.health)}${selectedId === node.nodeId ? ' is-open' : ''}`}
+                      style={{
+                        left: `${(node.position?.x ?? 0.5) * 73 + 20}%`,
+                        top: `${(node.position?.y ?? 0.5) * 76 + 11}%`,
+                      }}
+                      onClick={() => { setSelectedId(node.nodeId); setPanelTab('live'); }}
+                      aria-label={`${t.pg_map_node} ${padNode(node.nodeNumber)}`}
+                    >
+                      <span>{padNode(node.nodeNumber)}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="farm-legend">
+                  <p><span className="map-dot is-good" /> {t.pg_map_legend_good}</p>
+                  <p><span className="map-dot is-watch" /> {t.pg_map_legend_watch}</p>
+                  <p><span className="map-dot is-critical" /> {t.pg_map_legend_crit}</p>
+                  <p className="farm-legend-note">{t.pg_map_coverage}</p>
+                </div>
+                <div className="farm-scale" aria-hidden>
+                  <i /><i /><i />
+                  <span>0</span><span>25 m</span><span>50 m</span>
+                </div>
+                <span className="farm-north" aria-hidden>N</span>
+              </div>
+            </section>
+
+            {selected && (
+              <aside className="map-panel farm-node-panel" aria-label={`${t.pg_map_node} ${padNode(selected.nodeNumber)}`}>
+                <header>
+                  <div>
+                    <h2>{t.pg_map_node} {padNode(selected.nodeNumber)}</h2>
+                    <p className="farm-node-meta">
+                      {selected.zone} · {selected.coversSqMetres || 500} m²
+                    </p>
+                    <p className="farm-node-updated">{t.pg_map_updated}: {formatTime(selected.lastReadingAt, lang)}</p>
+                  </div>
+                  <div className="farm-node-head-tools">
+                    <span className={`farm-pill ${healthClass(selected.health)}`}>
+                      {qualityLabel(selected.health, t) || t.pg_map_waiting}
+                    </span>
+                    <button type="button" className="map-close" onClick={() => setSelectedId(null)} aria-label={t.lp_menu_close}>
+                      <X size={18} />
+                    </button>
+                  </div>
+                </header>
+
+                <div className="farm-panel-tabs" role="tablist">
+                  {[
+                    { id: 'live', label: t.pg_map_live },
+                    { id: 'graph', label: t.pg_map_graph },
+                    { id: 'details', label: t.pg_map_details },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="tab"
+                      className={panelTab === item.id ? 'is-active' : ''}
+                      onClick={() => setPanelTab(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {panelTab === 'live' && (
+                  <>
+                    <ul className="map-sensors farm-sensor-list">
+                      {Object.values(selected.sensors || {}).map((item) => {
+                        const Icon = SENSOR_ICONS[item.key] || Leaf;
+                        return (
+                          <li key={item.key} className={healthClass(item.status)}>
+                            <span className="farm-sensor-name">
+                              <Icon size={14} />
+                              {item.label}
+                            </span>
+                            <strong className="tabular">
+                              {item.value}{item.unit ? ` ${item.unit}` : ''}
+                            </strong>
+                            <em className={`farm-pill ${healthClass(item.status)}`}>{qualityLabel(item.status, t)}</em>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="farm-overall">
+                      <span>{t.pg_map_overall}</span>
+                      <em className={`farm-pill ${healthClass(selected.health)}`}>{qualityLabel(selected.health, t) || '—'}</em>
+                    </div>
+                    {criticalReasons.length > 0 && (
+                      <p className="farm-crit-note">
+                        {criticalReasons.join(', ')} — {t.pg_map_legend_crit}
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {panelTab === 'graph' && (
+                  <>
+                    <div className="map-graph-tools">
+                      <select className="az-select" value={sensor} onChange={(e) => setSensor(e.target.value)}>
+                        {GRAPH_SENSORS.map((key) => (
+                          <option key={key} value={key}>{sensorLabel(key, catalogue, t)}</option>
+                        ))}
+                      </select>
+                      <div className="map-ranges">
+                        {RANGES.map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            className={range === item ? 'is-active' : ''}
+                            onClick={() => setRange(item)}
+                          >
+                            {t[`pg_map_range_${item}`]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="map-chart">
+                      {series?.points?.length ? (
+                        <ResponsiveContainer width="100%" height={180}>
+                          <LineChart data={series.points.map((p) => ({ ...p, t: new Date(p.t).toLocaleString() }))}>
+                            <CartesianGrid stroke="rgba(20,28,22,0.08)" />
+                            <XAxis dataKey="t" hide />
+                            <YAxis width={36} tick={{ fontSize: 10, fill: 'var(--sage)' }} />
+                            <Tooltip />
+                            <Line type="monotone" dataKey="value" stroke="#0e1a12" strokeWidth={1.6} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <p className="farm-note">{t.pg_map_no_points}</p>
+                      )}
+                      {series?.aggregation && (
+                        <p className="farm-note">{series.aggregation.method}. {series.aggregation.note}</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {panelTab === 'details' && (
+                  <dl className="rs-conds">
+                    <div>
+                      <dt>{t.pg_map_zone}</dt>
+                      <dd>{selected.zone}</dd>
+                    </div>
+                    <div>
+                      <dt>ID</dt>
+                      <dd>{selected.nodeId}</dd>
+                    </div>
+                    <div>
+                      <dt>{t.pg_map_updated}</dt>
+                      <dd className="tabular">{formatTime(selected.lastReadingAt, lang)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t.pg_map_anomalies}</dt>
+                      <dd className="tabular">{detail?.anomalies?.total ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>{t.pg_map_latest}</dt>
+                      <dd className="tabular">
+                        {detail?.anomalies?.latestAt ? formatTime(detail.anomalies.latestAt, lang) : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t.pg_map_coverage}</dt>
+                      <dd>{selected.coversSqMetres || 500} m²</dd>
+                    </div>
+                  </dl>
+                )}
+
+                <div className="farm-cta-actions">
+                  <button type="button" className="btn-secondary" onClick={onRestore} disabled={busy}>
+                    <RotateCcw size={14} /> {t.pg_map_restore}
+                  </button>
+                  <Link to="/app/history" className="btn-secondary">{t.pg_view_history}</Link>
+                  <Link to="/app/analyze" className="btn-primary">{t.nav_analyze}</Link>
+                </div>
+              </aside>
+            )}
+          </div>
+
+          <footer className="farm-map-foot">
             <div>
-              <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-                Real-Time IoT Sensor Telemetry
-              </h1>
-              <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-                Continuous field sensor stream via LoRaWAN & NB-IoT gateways
+              <p className="pg-kicker">{t.pg_map_overview}</p>
+              <p>
+                {farm?.sizeLabel || t.pg_farm}
+                {' · '}
+                {nodes.length} {t.pg_map_active}
+                {coverage?.unprovisionedNodes ? ` · ${coverage.unprovisionedNodes} ${t.pg_map_unprovisioned}` : ''}
+                {' · '}
+                {t.pg_map_coverage}
               </p>
             </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-          <button
-            onClick={() => setLiveStream(!liveStream)}
-            style={{
-              background: liveStream ? '#E8F5E9' : '#FFF3E0',
-              color: liveStream ? '#2E7D32' : '#E65100',
-              border: `1px solid ${liveStream ? '#A5D6A7' : '#FFE0B2'}`,
-              borderRadius: '0.6rem',
-              padding: '0.5rem 1rem',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}
-          >
-            <Activity size={16} className={liveStream ? 'animate-pulse' : ''} />
-            {liveStream ? 'Live Telemetry Active' : 'Stream Paused'}
-          </button>
-
-          <button
-            onClick={fetchTelemetry}
-            style={{
-              background: '#FFFFFF',
-              border: '1px solid #CCC',
-              borderRadius: '0.6rem',
-              padding: '0.5rem 0.8rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.3rem',
-              fontWeight: 600,
-              fontSize: '0.85rem'
-            }}
-          >
-            <RefreshCw size={15} /> Sync
-          </button>
-        </div>
-      </div>
-
-      {/* Sensor Node Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.2rem', marginBottom: '2rem' }}>
-        {data?.sensors.map((sensor) => (
-          <motion.div
-            key={sensor.id}
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            style={{
-              background: '#FFFFFF',
-              borderRadius: '1rem',
-              padding: '1.25rem',
-              border: '1px solid rgba(0,0,0,0.07)',
-              boxShadow: '0 2px 12px rgba(0,0,0,0.03)'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-              <div>
-                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#1565C0', background: '#E3F2FD', padding: '0.2rem 0.5rem', borderRadius: '0.4rem' }}>
-                  {sensor.id}
-                </span>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-heading)', margin: '0.4rem 0 0.2rem 0' }}>
-                  {sensor.type}
-                </h3>
-                <span style={{ fontSize: '0.78rem', color: '#666' }}>📍 {sensor.location}</span>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', fontWeight: 700, color: '#444' }}>
-                <BatteryCharging size={16} color="#2E7D32" /> {sensor.battery}%
-              </div>
-            </div>
-
-            {/* Display Sensor Value */}
-            <div style={{ margin: '1rem 0 0.5rem 0', display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
-              {sensor.value !== undefined ? (
-                <>
-                  <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-heading)' }}>
-                    {sensor.value}
-                  </span>
-                  <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                    {sensor.unit}
-                  </span>
-                </>
-              ) : (
-                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#333' }}>
-                  N: <span style={{ color: '#2E7D32' }}>{sensor.n}</span> | P: <span style={{ color: '#1565C0' }}>{sensor.p}</span> | K: <span style={{ color: '#E65100' }}>{sensor.k}</span> mg/kg
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #F0F0F0', paddingTop: '0.75rem', fontSize: '0.8rem' }}>
-              <span style={{ color: '#2E7D32', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                <ShieldCheck size={15} /> Status: {sensor.status}
-              </span>
-              <span style={{ color: '#888' }}>Signal: Strong (98dBm)</span>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Live Chart & System Alerts */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem' }}>
-
-        {/* Real-time Graph */}
-        <div style={{ background: '#FFFFFF', padding: '1.5rem', borderRadius: '1rem', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-              Live Telemetry Stream (Moisture % vs Temp °C)
-            </h3>
-            <span style={{ fontSize: '0.75rem', color: '#1565C0', fontWeight: 700, background: '#E3F2FD', padding: '0.2rem 0.5rem', borderRadius: '0.4rem' }}>
-              Polling 4s
-            </span>
-          </div>
-
-          <div style={{ width: '100%', height: '240px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={historyChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
-                <XAxis dataKey="time" stroke="#888" style={{ fontSize: '0.75rem' }} />
-                <YAxis stroke="#888" style={{ fontSize: '0.75rem' }} />
-                <Tooltip contentStyle={{ borderRadius: '0.6rem', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                <Line type="monotone" dataKey="moisture" stroke="#1565C0" strokeWidth={3} dot={{ r: 4 }} name="Moisture (%)" />
-                <Line type="monotone" dataKey="temp" stroke="#E65100" strokeWidth={2} dot={{ r: 3 }} name="Temp (°C)" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Sensor Alerts Feed */}
-        <div style={{ background: '#FFFFFF', padding: '1.5rem', borderRadius: '1rem', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>
-          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-heading)', margin: '0 0 1rem 0' }}>
-            Telemetry Alert Log
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-            {data?.alerts.map((alt) => (
-              <div
-                key={alt.id}
-                style={{
-                  padding: '0.9rem',
-                  borderRadius: '0.75rem',
-                  background: alt.severity === 'warning' ? '#FFF8E1' : alt.severity === 'info' ? '#E3F2FD' : '#E8F5E9',
-                  border: `1px solid ${alt.severity === 'warning' ? '#FFE082' : alt.severity === 'info' ? '#90CAF9' : '#A5D6A7'}`,
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: '0.6rem'
-                }}
-              >
-                {alt.severity === 'warning' ? <AlertTriangle size={18} color="#F57F17" /> : <ShieldCheck size={18} color="#2E7D32" />}
-                <div>
-                  <p style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-heading)', margin: '0 0 0.2rem 0' }}>
-                    {alt.message}
-                  </p>
-                  <span style={{ fontSize: '0.75rem', color: '#777' }}>{alt.timestamp}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-      </div>
-
+            <Link to="/app/history" className="btn-secondary">{t.pg_map_all_nodes}</Link>
+          </footer>
+        </>
+      )}
     </div>
   );
 }

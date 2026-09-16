@@ -1,9 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { Loader2, Leaf, Droplets, Thermometer, Cloud, Zap, FlaskConical, CircleDot, CloudRain, RotateCcw, Cpu, ChevronDown, Sprout, MapPin } from 'lucide-react';
+import { Loader2, RotateCcw, Cpu, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useLang } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { requestCropDecision, mlErrorMessage } from '../utils/api';
+import { fetchAnalysisInput, fetchNodes } from '../utils/telemetry';
+import { saveLatestAnalysis } from '../utils/latestAnalysis';
+import { completeAction, emitPageGone, emitPageReady, sleep, subscribeSaathi } from '../utils/saathi/bus';
+import DataBadge from '../components/DataBadge';
+import PageHeader from '../components/PageHeader';
+import { cropLabel, qualityLabel } from './dashboard/helpers';
+
+function resolveCoords(farmer, nodes, sourceScope, sourceNode) {
+  if (sourceScope === 'node') {
+    const node = nodes.find((n) => n.nodeId === sourceNode);
+    const lat = Number(node?.coordinates?.latitude);
+    const lon = Number(node?.coordinates?.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { latitude: lat, longitude: lon };
+    }
+  }
+  const lat = Number(farmer?.profile?.latitude);
+  const lon = Number(farmer?.profile?.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return { latitude: lat, longitude: lon };
+  }
+  return {};
+}
 
 // Average soil & environment values for common Indian crops (from agricultural research data)
 const cropPresets = {
@@ -175,18 +199,86 @@ const regionPresets = {
 const Analyze = () => {
   const navigate = useNavigate();
   const { t } = useLang();
+  const { farmer } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const [activeParam, setActiveParam] = useState(null);
   const [selectedCrop, setSelectedCrop] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('');
   const [presetApplied, setPresetApplied] = useState('');
+  const [sourceScope, setSourceScope] = useState('farm');
+  const [sourceNode, setSourceNode] = useState('');
+  const [nodes, setNodes] = useState([]);
+  const [sensorNote, setSensorNote] = useState('');
+  const [usingSensors, setUsingSensors] = useState(false);
+  const [rainRecent, setRainRecent] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const [rainfallExplicit, setRainfallExplicit] = useState(false);
 
   const defaults = { n: 50, p: 25, k: 40, ph: 6.5, moisture: 50, temperature: 25, humidity: 60, rainfall: 100 };
   const [formData, setFormData] = useState({ ...defaults });
 
+  const applySensed = (sensed) => {
+    if (!sensed) return;
+    setFormData((prev) => ({
+      ...prev,
+      n: sensed.n ?? prev.n,
+      p: sensed.p ?? prev.p,
+      k: sensed.k ?? prev.k,
+      moisture: sensed.moisture ?? prev.moisture,
+      temperature: sensed.temperature ?? prev.temperature,
+      humidity: sensed.humidity ?? prev.humidity,
+    }));
+    setUsingSensors(true);
+  };
+
+  const loadSensors = async (scope, nodeId) => {
+    try {
+      const data = await fetchAnalysisInput({ scope, nodeId });
+      applySensed(data.sensed);
+      setSensorNote(data.sourceLabel || t.pg_az_from_sensors);
+      setRainRecent(data.context?.rain_recent_mm ?? null);
+      setSnapshot({
+        sourceLabel: data.sourceLabel,
+        recordedAt: data.recordedAt,
+        sensors: data.evaluation?.sensors || {},
+        context: data.context || {},
+      });
+      return data;
+    } catch {
+      setUsingSensors(false);
+      setSensorNote(t.pg_az_sensor_fail);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const pack = await fetchNodes();
+        if (cancelled) return;
+        setNodes(pack.nodes || []);
+      } catch {
+        if (!cancelled) setNodes([]);
+      }
+      if (!cancelled) await loadSensors('farm');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      loadSensors(sourceScope, sourceNode);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [sourceScope, sourceNode]);
+
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: parseFloat(e.target.value) });
-    setPresetApplied(''); // clear indicator when manual change
+    const name = e.target.name;
+    setFormData({ ...formData, [name]: parseFloat(e.target.value) });
+    setPresetApplied('');
+    if (name === 'rainfall') setRainfallExplicit(true);
   };
 
   const handleReset = () => {
@@ -194,18 +286,23 @@ const Analyze = () => {
     setSelectedCrop('');
     setSelectedRegion('');
     setPresetApplied('');
+    setRainfallExplicit(false);
+    loadSensors(sourceScope, sourceNode);
   };
 
   const handleRegionPreset = (regionKey) => {
     setSelectedRegion(regionKey);
-    setSelectedCrop(''); // clear crop selection when region is picked
+    setSelectedCrop('');
     if (!regionKey) return;
     const preset = regionPresets[regionKey];
-    setFormData({
-      n: preset.n, p: preset.p, k: preset.k, ph: preset.ph,
-      moisture: preset.moisture, temperature: preset.temperature,
-      humidity: preset.humidity, rainfall: preset.rainfall,
-    });
+    setFormData((prev) => (usingSensors
+      ? { ...prev, ph: preset.ph, rainfall: preset.rainfall }
+      : {
+        n: preset.n, p: preset.p, k: preset.k, ph: preset.ph,
+        moisture: preset.moisture, temperature: preset.temperature,
+        humidity: preset.humidity, rainfall: preset.rainfall,
+      }));
+    setRainfallExplicit(Boolean(regionKey));
     setPresetApplied(preset.label);
     setTimeout(() => setPresetApplied(''), 4000);
   };
@@ -214,96 +311,259 @@ const Analyze = () => {
     setSelectedCrop(cropKey);
     if (!cropKey) return;
     const preset = cropPresets[cropKey];
-    setFormData({
-      n: preset.n, p: preset.p, k: preset.k, ph: preset.ph,
-      moisture: preset.moisture, temperature: preset.temperature,
-      humidity: preset.humidity, rainfall: preset.rainfall,
-    });
+    setFormData((prev) => (usingSensors
+      ? { ...prev, ph: preset.ph, rainfall: preset.rainfall }
+      : {
+        n: preset.n, p: preset.p, k: preset.k, ph: preset.ph,
+        moisture: preset.moisture, temperature: preset.temperature,
+        humidity: preset.humidity, rainfall: preset.rainfall,
+      }));
+    setRainfallExplicit(Boolean(cropKey));
     setPresetApplied(preset.label);
     setTimeout(() => setPresetApplied(''), 3000);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    await runAnalysis();
+  };
+
+  const runAnalysis = async (override = {}) => {
+    const scope = override.scope || sourceScope;
+    const nodeId = override.nodeId !== undefined ? override.nodeId : sourceNode;
+    const sensed = override.formData || formData;
+    const sensorsOn = override.usingSensors !== undefined ? override.usingSensors : usingSensors;
+    const rainSet = override.rainfallExplicit !== undefined ? override.rainfallExplicit : rainfallExplicit;
     setLoading(true);
+    setSubmitError('');
     try {
-      const response = await axios.post('http://localhost:5005/predict', formData);
-      navigate('/app/results', { state: { result: response.data, input: formData } });
+      const coords = resolveCoords(farmer, nodes, scope, nodeId);
+      const payload = {
+        ...sensed,
+        state: farmer?.profile?.state || undefined,
+        device_id: scope === 'node' ? nodeId : undefined,
+        ...coords,
+      };
+      if (sensorsOn && !rainSet) {
+        delete payload.rainfall;
+      }
+      const result = await requestCropDecision(payload);
+      saveLatestAnalysis({
+        at: new Date().toISOString(),
+        crop_prediction: result.crop_prediction || null,
+        rainfall_intelligence: result.rainfall_intelligence || null,
+        rainfall_feature: result.rainfall_feature || null,
+        rainfall_unavailable_reason: result.rainfall_unavailable_reason || null,
+        decision: result.decision || null,
+        recommended_crops: result.recommended_crops || [],
+        input: sensed,
+        scope,
+        nodeId: scope === 'node' ? nodeId : null,
+        device_id: payload.device_id || null,
+      });
+      navigate('/app/results', {
+        state: {
+          result,
+          input: sensed,
+          sensorSource: sensorNote,
+          scope,
+          nodeId: nodeId || null,
+          telemetrySnapshot: snapshot,
+          rainfallExplicit: rainSet,
+        },
+      });
+      return result;
     } catch (error) {
       console.error(error);
-      alert('Error fetching prediction. Ensure the backend is running.');
+      setSubmitError(mlErrorMessage(error, t));
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
+  const analyzeApi = useRef({});
+  analyzeApi.current = { nodes, formData, usingSensors, rainfallExplicit, runAnalysis, loadSensors, setSourceScope, setSourceNode };
+
+  useEffect(() => {
+    emitPageReady('analyze');
+    const handle = async (action) => {
+      const api = analyzeApi.current;
+      const started = Date.now();
+      while (!api.nodes?.length && Date.now() - started < 8000) {
+        await sleep(120);
+      }
+      const node = api.nodes.find((n) => Number(n.nodeNumber) === Number(action.nodeNumber));
+      if (action.type === 'selectAnalysisNode') {
+        if (!node) {
+          completeAction(action.id, { ok: false, type: action.type, error: 'missing_node' });
+          return;
+        }
+        api.setSourceScope('node');
+        api.setSourceNode(node.nodeId);
+        await api.loadSensors('node', node.nodeId);
+        completeAction(action.id, { ok: true, type: action.type, nodeId: node.nodeId, nodeNumber: node.nodeNumber });
+        return;
+      }
+      if (action.type === 'runAnalysis') {
+        if (action.nodeNumber && !node) {
+          completeAction(action.id, { ok: false, type: action.type, error: 'missing_node' });
+          return;
+        }
+        try {
+          if (node) {
+            api.setSourceScope('node');
+            api.setSourceNode(node.nodeId);
+            const data = await api.loadSensors('node', node.nodeId);
+            const sensed = data?.sensed;
+            const form = sensed ? {
+              ...api.formData,
+              n: sensed.n ?? api.formData.n,
+              p: sensed.p ?? api.formData.p,
+              k: sensed.k ?? api.formData.k,
+              moisture: sensed.moisture ?? api.formData.moisture,
+              temperature: sensed.temperature ?? api.formData.temperature,
+              humidity: sensed.humidity ?? api.formData.humidity,
+            } : api.formData;
+            const result = await api.runAnalysis({
+              scope: 'node',
+              nodeId: node.nodeId,
+              formData: form,
+              usingSensors: Boolean(sensed),
+              rainfallExplicit: false,
+            });
+            completeAction(action.id, {
+              ok: true,
+              type: action.type,
+              crop: result?.crop_prediction?.recommended_crop,
+              recommended: result?.recommended_crops?.[0],
+            });
+            return;
+          }
+          const result = await api.runAnalysis({});
+          completeAction(action.id, {
+            ok: true,
+            type: action.type,
+            crop: result?.crop_prediction?.recommended_crop,
+            recommended: result?.recommended_crops?.[0],
+          });
+        } catch (err) {
+          completeAction(action.id, { ok: false, type: action.type, error: err.message || 'analysis_failed' });
+        }
+      }
+    };
+    const unsub = subscribeSaathi(['selectAnalysisNode', 'runAnalysis'], handle);
+    return () => {
+      unsub();
+      emitPageGone('analyze');
+    };
+  }, []);
+
   const parameters = [
-    { name: 'n', label: 'Nitrogen (N)', min: 0, max: 150, unit: 'mg/kg', color: '#10B981', icon: <Leaf size={18} />, hint: 'Essential for leaf growth. Low N causes yellowing.' },
-    { name: 'p', label: 'Phosphorus (P)', min: 0, max: 150, unit: 'mg/kg', color: '#3B82F6', icon: <FlaskConical size={18} />, hint: 'Drives root development and flowering.' },
-    { name: 'k', label: 'Potassium (K)', min: 0, max: 250, unit: 'mg/kg', color: '#F59E0B', icon: <Zap size={18} />, hint: 'Strengthens disease resistance and yield.' },
-    { name: 'ph', label: 'pH Level', min: 0, max: 14, step: 0.1, unit: '', color: '#8B5CF6', icon: <CircleDot size={18} />, hint: '6.0–7.0 is optimal. Affects nutrient absorption.' },
-    { name: 'moisture', label: 'Moisture', min: 0, max: 100, unit: '%', color: '#0EA5E9', icon: <Droplets size={18} />, hint: 'Water retention level in the soil sample.' },
-    { name: 'temperature', label: 'Temperature', min: -10, max: 50, unit: '°C', color: '#EF4444', icon: <Thermometer size={18} />, hint: 'Ambient air temperature at measurement time.' },
-    { name: 'humidity', label: 'Humidity', min: 0, max: 100, unit: '%', color: '#14B8A6', icon: <Cloud size={18} />, hint: 'Relative humidity in the environment.' },
-    { name: 'rainfall', label: 'Rainfall', min: 0, max: 300, unit: 'mm', color: '#6366F1', icon: <CloudRain size={18} />, hint: 'Average rainfall in the region (mm/year).' },
+    { name: 'n', label: t.analyze_nitrogen, min: 0, max: 150, unit: 'mg/kg', hint: t.pg_hint_n },
+    { name: 'p', label: t.analyze_phosphorus, min: 0, max: 150, unit: 'mg/kg', hint: t.pg_hint_p },
+    { name: 'k', label: t.analyze_potassium, min: 0, max: 250, unit: 'mg/kg', hint: t.pg_hint_k },
+    { name: 'ph', label: t.analyze_ph, min: 0, max: 14, step: 0.1, unit: '', hint: t.pg_hint_ph },
+    { name: 'moisture', label: t.analyze_moisture, min: 0, max: 100, unit: '%', hint: t.pg_hint_moist },
+    { name: 'temperature', label: t.analyze_temperature, min: -10, max: 50, unit: '°C', hint: t.pg_hint_temp },
+    { name: 'humidity', label: t.analyze_humidity, min: 0, max: 100, unit: '%', hint: t.pg_hint_humid },
+    { name: 'rainfall', label: t.analyze_rainfall, min: 0, max: 300, unit: 'mm', hint: t.pg_hint_rain },
   ];
 
-  const getFillPct = (param) => {
-    const range = param.max - param.min;
-    return ((formData[param.name] - param.min) / range) * 100;
-  };
+  const plainLabel = (value) => String(value || '').replace(/^[^A-Za-z]+/, '').trim();
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ maxWidth: '900px', margin: '0 auto' }}>
-
-      {/* Header */}
-      <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)', padding: '0.4rem 1rem', borderRadius: '2rem', color: '#10B981', fontWeight: 600, fontSize: '0.8rem', marginBottom: '1rem' }}>
-          <Cpu size={14} /> ML-Powered Analysis
-        </div>
-        <h1 className="heading" style={{ fontSize: '2.2rem' }}>{t.analyze_title}</h1>
-        <p className="subheading" style={{ maxWidth: '550px', margin: '0 auto' }}>{t.analyze_subtitle}</p>
-      </div>
+    <div className="farm-page">
+      <PageHeader
+        kicker={t.nav_analyze}
+        title={t.pg_analyze_h}
+        lede={t.pg_analyze_p}
+        tools={<DataBadge kind={usingSensors ? 'demo' : 'analysis'} />}
+      />
+      <ol className="pg-flow">
+        <li><strong>{t.pg_step_field}</strong></li>
+        <li><strong>{t.pg_step_soil}</strong></li>
+        <li><strong>{t.pg_step_climate}</strong></li>
+        <li><strong>{t.pg_step_analyze}</strong></li>
+      </ol>
+      <p className="farm-note" style={{ marginBottom: '1.2rem' }}>{t.pg_analyze_note}</p>
 
       <form onSubmit={handleSubmit}>
-
-        {/* ━━━ Region Preset Picker ━━━ */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="glass"
-          style={{ padding: '1.5rem', marginBottom: '1.5rem', position: 'relative', overflow: 'hidden', borderLeft: selectedRegion ? '3px solid #6366F1' : undefined }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366F1' }}>
-              <MapPin size={18} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Quick Fill — Region Presets</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Select your Indian region to auto-fill local soil & climate conditions</p>
-            </div>
-          </div>
-
-          <div style={{ position: 'relative' }}>
+        <div className="farm-panel az-group">
+          <h2>{t.pg_az_source}</h2>
+          <p className="az-meta">{t.pg_az_from_sensors}</p>
+          <div className="az-field" style={{ marginTop: '0.85rem' }}>
             <select
-              id="region-preset-select"
-              value={selectedRegion}
-              onChange={(e) => handleRegionPreset(e.target.value)}
-              style={{
-                width: '100%', padding: '0.85rem 1rem', borderRadius: '0.75rem',
-                border: '1px solid var(--border)', background: 'var(--surface-alt)',
-                color: selectedRegion ? 'var(--text-heading)' : 'var(--text-muted)',
-                fontSize: '0.95rem', fontWeight: 600, outline: 'none', cursor: 'pointer',
-                appearance: 'none',
+              className="az-select"
+              value={sourceScope === 'node' ? sourceNode : 'farm'}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === 'farm') {
+                  setSourceScope('farm');
+                  setSourceNode('');
+                  loadSensors('farm');
+                } else {
+                  setSourceScope('node');
+                  setSourceNode(value);
+                  loadSensors('node', value);
+                }
               }}
             >
-              {Object.keys(regionPresets).map(key => (
-                <option key={key} value={key} style={{ color: 'var(--text-heading)', background: 'var(--surface)', padding: '8px' }}>
-                  {regionPresets[key].label}
+              <option value="farm">{t.pg_az_farm}</option>
+              {nodes.map((node) => (
+                <option key={node.nodeId} value={node.nodeId}>
+                  {t.pg_map_node} {node.nodeNumber} · {node.zone}
                 </option>
               ))}
             </select>
-            <ChevronDown size={18} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <ChevronDown size={18} className="az-chevron" />
+          </div>
+          {sensorNote && <p className="farm-note">{sensorNote}</p>}
+          {usingSensors && rainRecent != null && (
+            <p className="farm-note">{t.pg_az_rain_note}: {rainRecent} mm</p>
+          )}
+          {usingSensors && (
+            <p className="farm-note">{t.pg_az_ph_note}</p>
+          )}
+          {usingSensors && !rainfallExplicit && (
+            <p className="farm-note">{t.pg_az_rain_model}</p>
+          )}
+          {snapshot?.sensors && Object.keys(snapshot.sensors).length > 0 && (
+            <>
+              <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.95rem' }}>{t.pg_az_snapshot}</h3>
+              <ul className="map-sensors">
+                {Object.values(snapshot.sensors).map((item) => (
+                  <li key={item.key} className={item.status === 'CRITICAL' ? 'is-critical' : ''}>
+                    <span>{item.label}</span>
+                    <strong className="tabular">
+                      {item.value}{item.unit ? ` ${item.unit}` : ''}
+                    </strong>
+                    <em>{qualityLabel(item.status, t)}</em>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+
+        {/* ━━━ Region Preset Picker ━━━ */}
+        <div className="farm-panel az-group">
+          <h2>{t.pg_region}</h2>
+          <p className="az-meta">{t.pg_region_p}</p>
+          <div className="az-field" style={{ marginTop: '0.85rem' }}>
+            <select
+              id="region-preset-select"
+              className="az-select"
+              value={selectedRegion}
+              onChange={(e) => handleRegionPreset(e.target.value)}
+            >
+              {Object.keys(regionPresets).map((key) => (
+                <option key={key} value={key}>
+                  {key ? plainLabel(regionPresets[key].label) : t.analyze_choose_region}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="az-chevron" />
           </div>
 
           {/* Region Detail Card */}
@@ -316,96 +576,46 @@ const Analyze = () => {
                 style={{ marginTop: '1rem' }}
               >
                 {/* Description & Soil Type */}
-                <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.12)', borderRadius: '0.75rem', padding: '1rem', marginBottom: '0.75rem' }}>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--text-heading)', margin: '0 0 0.5rem 0', lineHeight: 1.5 }}>
-                    {regionPresets[selectedRegion].desc}
-                  </p>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(139,92,246,0.08)', color: '#8B5CF6', padding: '0.3rem 0.7rem', borderRadius: '2rem', fontSize: '0.72rem', fontWeight: 700, border: '1px solid rgba(139,92,246,0.15)' }}>
-                      🪨 {regionPresets[selectedRegion].soil}
-                    </span>
-                  </div>
+                <div style={{ background: 'var(--surface-alt)', border: '1px solid var(--line)', borderRadius: '0.55rem', padding: '0.95rem', marginBottom: '0.75rem' }}>
+                  <p className="az-meta" style={{ margin: 0 }}>{regionPresets[selectedRegion].desc}</p>
+                  <p className="az-meta">{regionPresets[selectedRegion].soil}</p>
                 </div>
-
-                {/* Key Params */}
-                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                  {[
-                    { label: 'N', value: regionPresets[selectedRegion].n, color: '#10B981' },
-                    { label: 'P', value: regionPresets[selectedRegion].p, color: '#3B82F6' },
-                    { label: 'K', value: regionPresets[selectedRegion].k, color: '#F59E0B' },
-                    { label: 'pH', value: regionPresets[selectedRegion].ph, color: '#8B5CF6' },
-                    { label: 'Temp', value: `${regionPresets[selectedRegion].temperature}°C`, color: '#EF4444' },
-                    { label: 'Humid', value: `${regionPresets[selectedRegion].humidity}%`, color: '#14B8A6' },
-                    { label: 'Rain', value: `${regionPresets[selectedRegion].rainfall}mm`, color: '#6366F1' },
-                    { label: 'Moist', value: `${regionPresets[selectedRegion].moisture}%`, color: '#0EA5E9' },
-                  ].map((badge, i) => (
-                    <span key={i} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                      background: `${badge.color}0A`, color: badge.color,
-                      padding: '0.3rem 0.6rem', borderRadius: '2rem',
-                      fontSize: '0.7rem', fontWeight: 700,
-                      border: `1px solid ${badge.color}20`,
-                    }}>
-                      {badge.label}: {badge.value}
-                    </span>
-                  ))}
+                <div className="az-chips">
+                  <span>N {regionPresets[selectedRegion].n}</span>
+                  <span>P {regionPresets[selectedRegion].p}</span>
+                  <span>K {regionPresets[selectedRegion].k}</span>
+                  <span>pH {regionPresets[selectedRegion].ph}</span>
+                  <span>{regionPresets[selectedRegion].temperature}°C</span>
+                  <span>{regionPresets[selectedRegion].moisture}%</span>
                 </div>
-
-                {/* Best Crops for Region */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>Best Crops:</span>
-                  {regionPresets[selectedRegion].crops.map((crop, i) => (
-                    <span key={i} style={{
-                      background: 'rgba(16,185,129,0.08)', color: '#059669',
-                      padding: '0.25rem 0.6rem', borderRadius: '1rem',
-                      fontSize: '0.7rem', fontWeight: 700,
-                      border: '1px solid rgba(16,185,129,0.15)',
-                    }}>
-                      {crop}
-                    </span>
+                <div className="az-chips" style={{ marginTop: '0.55rem' }}>
+                  <span>{t.pg_best_crops}:</span>
+                  {regionPresets[selectedRegion].crops.map((crop) => (
+                    <span key={crop}>{crop}</span>
                   ))}
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.div>
+        </div>
 
         {/* ━━━ Crop Preset Picker ━━━ */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="glass"
-          style={{ padding: '1.5rem', marginBottom: '1.5rem', position: 'relative', overflow: 'hidden' }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10B981' }}>
-              <Sprout size={18} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Quick Fill — Crop Presets</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Select a crop to auto-fill average soil & climate values</p>
-            </div>
-          </div>
-
-          <div style={{ position: 'relative' }}>
+        <div className="farm-panel az-group">
+          <h2>{t.pg_crop_fill}</h2>
+          <p className="az-meta">{t.pg_crop_p}</p>
+          <div className="az-field" style={{ marginTop: '0.85rem' }}>
             <select
+              className="az-select"
               value={selectedCrop}
               onChange={(e) => handleCropPreset(e.target.value)}
-              style={{
-                width: '100%', padding: '0.85rem 1rem', borderRadius: '0.75rem',
-                border: '1px solid var(--border)', background: 'var(--surface-alt)',
-                color: selectedCrop ? 'var(--text-heading)' : 'var(--text-muted)',
-                fontSize: '0.95rem', fontWeight: 600, outline: 'none', cursor: 'pointer',
-                appearance: 'none',
-              }}
             >
-              {Object.keys(cropPresets).map(key => (
-                <option key={key} value={key} style={{ color: 'var(--text-heading)', background: 'var(--surface)', padding: '8px' }}>
-                  {cropPresets[key].label}
+              {Object.keys(cropPresets).map((key) => (
+                <option key={key} value={key}>
+                  {key ? cropLabel(plainLabel(cropPresets[key].label), t) : t.analyze_choose_crop}
                 </option>
               ))}
             </select>
-            <ChevronDown size={18} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <ChevronDown size={18} className="az-chevron" />
           </div>
 
           {/* Show NPK preview when a crop is selected */}
@@ -417,25 +627,13 @@ const Analyze = () => {
                 exit={{ opacity: 0, height: 0 }}
                 style={{ marginTop: '1rem' }}
               >
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  {[
-                    { label: 'N', value: cropPresets[selectedCrop].n, color: '#10B981' },
-                    { label: 'P', value: cropPresets[selectedCrop].p, color: '#3B82F6' },
-                    { label: 'K', value: cropPresets[selectedCrop].k, color: '#F59E0B' },
-                    { label: 'pH', value: cropPresets[selectedCrop].ph, color: '#8B5CF6' },
-                    { label: 'Temp', value: `${cropPresets[selectedCrop].temperature}°`, color: '#EF4444' },
-                    { label: 'Rain', value: `${cropPresets[selectedCrop].rainfall}mm`, color: '#6366F1' },
-                  ].map((badge, i) => (
-                    <span key={i} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                      background: `${badge.color}12`, color: badge.color,
-                      padding: '0.35rem 0.7rem', borderRadius: '2rem',
-                      fontSize: '0.75rem', fontWeight: 700,
-                      border: `1px solid ${badge.color}25`,
-                    }}>
-                      {badge.label}: {badge.value}
-                    </span>
-                  ))}
+                <div className="az-chips">
+                  <span>N {cropPresets[selectedCrop].n}</span>
+                  <span>P {cropPresets[selectedCrop].p}</span>
+                  <span>K {cropPresets[selectedCrop].k}</span>
+                  <span>pH {cropPresets[selectedCrop].ph}</span>
+                  <span>{cropPresets[selectedCrop].temperature}°</span>
+                  <span>{cropPresets[selectedCrop].rainfall}mm</span>
                 </div>
               </motion.div>
             )}
@@ -448,124 +646,77 @@ const Analyze = () => {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 10 }}
-                style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#10B981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                style={{ marginTop: '0.75rem' }}
+                className="az-meta"
               >
-                ✅ Values loaded for {presetApplied}
+                {t.pg_loaded} {plainLabel(presetApplied)}
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.div>
+        </div>
 
-        {/* ━━━ Parameter Cards Grid ━━━ */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-          {parameters.map((param, i) => {
-            const fillPct = getFillPct(param);
+        {/* ━━━ Parameter groups ━━━ */}
+        {[
+          { title: t.pg_nutrients, keys: ['n', 'p', 'k'] },
+          { title: t.pg_chemistry, keys: ['ph', 'moisture'] },
+          { title: t.pg_climate, keys: ['temperature', 'humidity', 'rainfall'] },
+        ].map((group) => (
+        <div key={group.title} className="az-group">
+          <h2>{group.title}</h2>
+        <div className="az-grid">
+          {parameters.filter((p) => group.keys.includes(p.name)).map((param) => {
             const isActive = activeParam === param.name;
-
             return (
-              <motion.div
+              <div
                 key={param.name}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: i * 0.04 }}
+                className="az-param"
                 onMouseEnter={() => setActiveParam(param.name)}
                 onMouseLeave={() => setActiveParam(null)}
-                className="glass"
-                style={{
-                  padding: '1.25rem 1.5rem',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  transition: 'border-color 0.3s, box-shadow 0.3s',
-                  borderColor: isActive ? `${param.color}40` : undefined,
-                  boxShadow: isActive ? `0 0 20px ${param.color}15` : undefined,
-                }}
               >
-                {/* Background fill bar */}
-                <div style={{
-                  position: 'absolute', left: 0, top: 0, bottom: 0,
-                  width: `${fillPct}%`,
-                  background: `linear-gradient(90deg, ${param.color}08, ${param.color}12)`,
-                  transition: 'width 0.3s ease',
-                  pointerEvents: 'none',
-                }} />
-
-                <div style={{ position: 'relative', zIndex: 1 }}>
-                  {/* Top row: icon + label + value */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: `${param.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: param.color }}>
-                        {param.icon}
-                      </div>
-                      <span style={{ fontWeight: 700, color: 'var(--text-heading)', fontSize: '0.92rem' }}>{param.label}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.25rem' }}>
-                      <span style={{ fontSize: '1.5rem', fontWeight: 900, color: param.color }}>{formData[param.name]}</span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>{param.unit}</span>
-                    </div>
-                  </div>
-
-                  {/* Slider */}
-                  <input
-                    type="range"
-                    name={param.name}
-                    min={param.min}
-                    max={param.max}
-                    step={param.step || 1}
-                    value={formData[param.name]}
-                    onChange={handleChange}
-                    style={{ width: '100%', accentColor: param.color, height: '6px', cursor: 'pointer' }}
-                  />
-
-                  {/* Min/Max + Hint */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem' }}>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{param.min}</span>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{param.max}</span>
-                  </div>
-
-                  {/* Tooltip-style hint */}
-                  <AnimatePresence>
-                    {isActive && (
-                      <motion.p
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        style={{ fontSize: '0.75rem', color: param.color, marginTop: '0.5rem', marginBottom: 0, lineHeight: 1.4, fontWeight: 500 }}
-                      >
-                        💡 {param.hint}
-                      </motion.p>
-                    )}
-                  </AnimatePresence>
+                <div className="az-param-top">
+                  <label htmlFor={`az-${param.name}`}>{param.label}</label>
+                  <output className="tabular" htmlFor={`az-${param.name}`}>
+                    {formData[param.name]}{param.unit ? ` ${param.unit}` : ''}
+                  </output>
                 </div>
-              </motion.div>
+                <input
+                  id={`az-${param.name}`}
+                  type="range"
+                  name={param.name}
+                  min={param.min}
+                  max={param.max}
+                  step={param.step || 1}
+                  value={formData[param.name]}
+                  onChange={handleChange}
+                />
+                {isActive && <p className="az-hint">{param.hint}</p>}
+              </div>
             );
           })}
         </div>
+        </div>
+        ))}
 
-        {/* ━━━ Action Buttons ━━━ */}
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={handleReset}
-            style={{
-              padding: '0.85rem 1.5rem', borderRadius: '1rem', fontWeight: 700, fontSize: '0.95rem',
-              background: 'var(--surface)', border: '1px solid var(--border)',
-              color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
-              transition: 'all 0.3s',
-            }}
-          >
+        {submitError && (
+          <p className="az-error" role="alert">
+            <AlertTriangle size={16} /> {submitError}
+          </p>
+        )}
+
+        <div className="az-actions">
+          <button type="button" className="btn-secondary" onClick={handleReset}>
             <RotateCcw size={16} /> {t.analyze_reset}
           </button>
-
-          <button type="submit" className="btn-primary btn-glow" disabled={loading} style={{ padding: '0.85rem 3rem', fontSize: '1.05rem', minWidth: '250px' }}>
+          <button type="submit" className="btn-primary" disabled={loading}>
             {loading ? (
-              <><Loader2 className="animate-spin" size={20} /> {t.analyze_analyzing}</>
+              <><Loader2 className="animate-spin" size={18} /> {t.analyze_analyzing}</>
             ) : (
-              <><Cpu size={18} /> {t.analyze_submit}</>
+              <><Cpu size={16} /> {t.analyze_submit}</>
             )}
           </button>
         </div>
       </form>
-    </motion.div>
+    </div>
   );
 };
 

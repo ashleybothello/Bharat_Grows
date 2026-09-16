@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { CloudSun, Droplets, Thermometer, Calendar, ShieldAlert, CheckCircle, ArrowRight, Zap, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
 
-const BACKEND_URL = 'http://localhost:5005';
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5005';
 
 const MOCK_WEATHER_DATA = {
   success: true,
@@ -26,6 +28,7 @@ const MOCK_WEATHER_DATA = {
 };
 
 export default function IrrigationScheduler() {
+  const { t } = useLang();
   const [weatherData, setWeatherData] = useState(null);
   const [acres, setAcres] = useState(2);
   const [cropType, setCropType] = useState('Wheat');
@@ -53,28 +56,14 @@ export default function IrrigationScheduler() {
   const totalWaterToday = (weatherData?.smart_irrigation_recommendation?.liters_per_acre || 4200) * acres;
 
   return (
-    <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+    <div className="farm-page">
 
-      {/* Title Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div style={{ background: '#E0F7FA', padding: '0.5rem', borderRadius: '0.6rem' }}>
-            <CloudSun size={26} color="#0277BD" />
-          </div>
-          <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-              AI Weather & Smart Irrigation Scheduler
-            </h1>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-              Evapotranspiration (ET0) micro-climate precision irrigation engine
-            </p>
-          </div>
-        </div>
-
-        <div style={{ background: '#E0F7FA', color: '#0277BD', padding: '0.4rem 0.8rem', borderRadius: '0.6rem', fontWeight: 700, fontSize: '0.82rem', border: '1px solid #B2EBF2' }}>
-          📍 {weatherData?.location || 'Nashik Region'}
-        </div>
-      </div>
+      <PageHeader
+        kicker={t.pg_more_irr}
+        title={t.pg_more_irr}
+        lede={t.pg_more_irr_d}
+        tools={weatherData?.location ? <span className="az-meta">{weatherData.location}</span> : null}
+      />
 
       {/* Main Grid: AI Recommendation Banner + Interactive Controls */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>

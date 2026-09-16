@@ -418,7 +418,7 @@ app.post('/api/verify-otp', async (req, res) => {
 // Multilingual offline responses for all 9 supported languages
 const offlineTranslations = {
   en: {
-    greeting: 'Namaste! 🙏 I am KrishiMitra, your farming assistant. Ask me about soil health, crop recommendations, water advice, or fertilizer tips!',
+    greeting: "Namaste! 🙏 I'm SAATHI, BharatGrow's smart agricultural assistant. Ask me about your soil, crops, weather, market prices, or farm sensor data.",
     default_help: 'I can help you with: 🌱 Soil health analysis, 🌾 Crop recommendations, 💧 Irrigation advice, 🧪 Fertilizer tips. Try asking about any of these!',
     soil_with_data: (ctx) => `Your latest soil quality is "${ctx.soil_quality}". Nitrogen: ${ctx.n}, Phosphorus: ${ctx.p}, Potassium: ${ctx.k}, pH: ${ctx.ph}. Go to the Insights page for detailed charts!`,
     soil_no_data: 'Please run a soil analysis first so I can give you detailed advice. Let me take you to the analysis page!',
@@ -630,7 +630,7 @@ app.post('/api/chat', async (req, res) => {
          Improvement Tips: ${context.improvement_tips}`
       : `No recent soil readings available.`;
 
-    const systemPrompt = `You are KrishiMitra AI, a friendly, patient, and intelligent farming assistant designed for Indian farmers.
+    const systemPrompt = `You are SAATHI — Smart Agricultural Assistance & Technology Helper Interface — inside BharatGrow.
 You speak in simple, clear language and always respond in the language code requested: ${lang_code || 'en'}.
 You help farmers with: Soil health, Water recommendations, Crop suggestions, Fertilizer usage, Weather-related advice.
 Avoid technical jargon. Keep answers short and practical. Give actionable advice. 

@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { Bug, UploadCloud, CheckCircle, AlertTriangle, ShieldCheck, Leaf, Sparkles, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
 
-const BACKEND_URL = 'http://localhost:5005';
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5005';
 
 const sampleLeaves = [
   { id: 'tomato_blight', crop: 'Tomato', disease: 'Early Blight', badge: 'Tomato Leaf Sample', color: '#EF4444' },
@@ -13,6 +15,7 @@ const sampleLeaves = [
 ];
 
 export default function PestDetection() {
+  const { t } = useLang();
   const [selectedSample, setSelectedSample] = useState('tomato_blight');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -80,28 +83,9 @@ export default function PestDetection() {
   };
 
   return (
-    <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+    <div className="farm-page">
 
-      {/* Title Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div style={{ background: '#FFEBEE', padding: '0.5rem', borderRadius: '0.6rem' }}>
-            <Bug size={26} color="#C62828" />
-          </div>
-          <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-              AI Leaf Disease & Pest Scanner
-            </h1>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-              Deep Learning Vision Classifier for early crop pathogen detection
-            </p>
-          </div>
-        </div>
-
-        <div style={{ background: '#FFEBEE', color: '#C62828', padding: '0.4rem 0.8rem', borderRadius: '0.6rem', fontWeight: 700, fontSize: '0.82rem', border: '1px solid #FFCDD2' }}>
-          ResNet-50 Vision Model (96.4% Acc)
-        </div>
-      </div>
+      <PageHeader kicker={t.pg_more_pest} title={t.pg_more_pest} lede={t.pg_more_pest_d} />
 
       {/* Main Grid: Upload Area + Interactive Sample Selector */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>

@@ -1,42 +1,225 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, X, Mic, Volume2, Send, Globe, MicOff, Sparkles } from 'lucide-react';
+import { X, Mic, Volume2, Send, MicOff, Sparkles, Droplets, Sprout, CloudSun } from 'lucide-react';
 import axios from 'axios';
-import { translations } from '../utils/i18n';
+import { useLang, tFor } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { API_URL } from '../utils/api';
+import { readSession } from '../utils/auth';
+import { fetchAnomalies, fetchNodes } from '../utils/telemetry';
+import { fetchMarketSummary } from '../utils/market';
+import { cropsOf, cropLabel, qualityLabel } from '../pages/dashboard/helpers';
+import { readLatestAnalysis } from '../utils/latestAnalysis';
+import { planIntent } from '../utils/saathi/intent';
+import { actionsFromChatPayload, executePlan } from '../utils/saathi/executor';
+import { getUiContext, rememberSaathiFocus, setUiContext } from '../utils/saathi/bus';
+import { formatActionReply, formatDataReply } from '../utils/saathi/reply';
+import { getSaathiData } from '../utils/saathi/data';
+import { formatInfoReply } from '../utils/saathi/summary';
+import { LANGUAGES, BCP47, detectReplyLang } from '../utils/i18n-catalog';
+
+function SaathiBlocks({ blocks }) {
+  if (!blocks) return null;
+  return (
+    <div className="saathi-card">
+      {blocks.title ? <h3>{blocks.title}</h3> : null}
+      {blocks.overall ? <p className="saathi-overall">{blocks.overall}</p> : null}
+      {(blocks.sections || []).map((sec, idx) => (
+        <section key={`${sec.heading || 'sec'}-${idx}`}>
+          {sec.heading ? <h4>{sec.heading}</h4> : null}
+          {sec.rows?.length ? (
+            <dl>
+              {sec.rows.map((row) => (
+                <div key={`${row.label}-${row.value}`}>
+                  <dt>{row.label}</dt>
+                  <dd>
+                    {row.value}
+                    {row.status ? <span className="saathi-st">{row.status}</span> : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          {sec.body ? <p>{sec.body}</p> : null}
+        </section>
+      ))}
+      {blocks.conclusion ? <p className="saathi-end">{blocks.conclusion}</p> : null}
+      {blocks.note ? <p className="saathi-note">{blocks.note}</p> : null}
+    </div>
+  );
+}
 
 const AIChatbot = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const hideOn = location.pathname === '/' || location.pathname === '/beta' || location.pathname === '/login' || location.pathname === '/signup';
+  const onApp = location.pathname.startsWith('/app');
+  const { lang, setLang, t } = useLang();
+  const { farmer } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [lang, setLang] = useState('en');
   const [messages, setMessages] = useState([]);
+  const [noVoice, setNoVoice] = useState(false);
   const [input, setInput] = useState('');
   const [latestData, setLatestData] = useState(null);
+  const [nodesPack, setNodesPack] = useState(null);
+  const [anomalies, setAnomalies] = useState([]);
+  const [market, setMarket] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [micError, setMicError] = useState('');
+  const [listening, setListening] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const t = translations[lang] || translations['en'];
-
   useEffect(() => {
-    const fetchLatest = async () => {
+    if (!onApp) return undefined;
+    let cancelled = false;
+
+    const loadHistory = async () => {
       try {
-        const res = await axios.get('http://localhost:5005/history');
-        if (res.data && res.data.length > 0) setLatestData(res.data[0]);
-      } catch (err) { }
+        const res = await axios.get(`${API_URL}/history`);
+        if (!cancelled && res.data?.length) setLatestData(res.data[0]);
+      } catch {
+        /* history is optional context */
+      }
     };
-    fetchLatest();
-  }, []);
+
+    const loadLive = async () => {
+      try {
+        const [pack, events] = await Promise.all([
+          fetchNodes(),
+          fetchAnomalies({ limit: 8 }),
+        ]);
+        if (cancelled) return;
+        setNodesPack(pack);
+        setAnomalies(events.rows || []);
+      } catch {
+        if (!cancelled) {
+          setNodesPack(null);
+          setAnomalies([]);
+        }
+      }
+    };
+
+    const loadMarket = async () => {
+      try {
+        const res = await fetchMarketSummary({
+          state: farmer?.profile?.state || farmer?.state || '',
+          district: farmer?.profile?.district || '',
+          pin: farmer?.profile?.primaryCrop || '',
+        });
+        if (!cancelled && res.ok && res.data?.success) setMarket(res.data);
+      } catch {
+        if (!cancelled) setMarket(null);
+      }
+    };
+
+    loadHistory();
+    loadLive();
+    loadMarket();
+    const timer = window.setInterval(loadLive, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [onApp, farmer]);
+
+  const nodes = nodesPack?.nodes || [];
+  const liveNode = nodes.find((n) => n.lastReadingAt) || nodes[0] || null;
+  const lastAnalysis = readLatestAnalysis();
+  const crops = lastAnalysis?.crop_prediction?.recommended_crop
+    ? [lastAnalysis.crop_prediction.recommended_crop, ...(lastAnalysis.recommended_crops || [])]
+      .filter((name, idx, arr) => name && arr.indexOf(name) === idx)
+    : cropsOf(latestData);
+  const crop = crops[0] || farmer?.profile?.primaryCrop || null;
+
+  const compactContext = useMemo(() => {
+    const profile = farmer?.profile || {};
+    return {
+      soil_quality: latestData?.soil_quality || null,
+      recommended_crops: crops,
+      n: lastAnalysis?.crop_prediction?.features_received?.N ?? latestData?.n ?? null,
+      p: lastAnalysis?.crop_prediction?.features_received?.P ?? latestData?.p ?? null,
+      k: lastAnalysis?.crop_prediction?.features_received?.K ?? latestData?.k ?? null,
+      ph: lastAnalysis?.crop_prediction?.features_received?.ph ?? latestData?.ph ?? null,
+      improvement_tips: latestData?.improvement_tips || null,
+      latestAnalysis: lastAnalysis,
+      crop_prediction: lastAnalysis?.crop_prediction || null,
+      rainfall_intelligence: lastAnalysis?.rainfall_intelligence || null,
+      farmer: {
+        name: farmer?.name || profile.fullName || null,
+        village: farmer?.village || profile.village || null,
+        district: profile.district || null,
+        state: profile.state || null,
+        primaryCrop: profile.primaryCrop || null,
+        farmName: profile.farmName || null,
+      },
+      farm: nodesPack?.farm || null,
+      tally: nodesPack?.tally || null,
+      nodes: nodes.map((node) => ({
+        nodeNumber: node.nodeNumber,
+        zone: node.zone,
+        health: node.health,
+        lastReadingAt: node.lastReadingAt,
+        sensors: node.sensors,
+        criticalSensors: node.criticalSensors,
+      })),
+      selectedNode: liveNode ? {
+        nodeNumber: liveNode.nodeNumber,
+        zone: liveNode.zone,
+        health: liveNode.health,
+        sensors: liveNode.sensors,
+        criticalSensors: liveNode.criticalSensors,
+      } : null,
+      recentAnomalies: anomalies.slice(0, 8).map((row) => ({
+        nodeNumber: row.node_number,
+        sensor: row.sensor,
+        value: row.value,
+        severity: row.severity,
+        detectedAt: row.detected_at,
+      })),
+      marketSummary: market?.commodities
+        ? {
+            source: market.source,
+            available: market.commodities.length > 0,
+            lastUpdated: market.lastUpdated,
+            crops: market.commodities.slice(0, 8).map((row) => ({
+              commodity: row.commodity,
+              market: row.market,
+              modalPrice: row.modalPrice,
+              unit: row.unit,
+              date: row.date,
+            })),
+          }
+        : null,
+    };
+  }, [latestData, crops, farmer, nodesPack, nodes, liveNode, anomalies, market, lastAnalysis]);
+
+  const soilChip = (() => {
+    const critical = nodes.filter((n) => n.health === 'CRITICAL').length;
+    const watch = nodes.filter((n) => n.health === 'AVERAGE' || n.health === 'BAD').length;
+    if (critical) return t.pg_dash_critical;
+    if (watch) return t.pg_dash_warning;
+    if (nodes.some((n) => n.health === 'GOOD')) return t.pg_dash_healthy;
+    if (latestData?.soil_quality) return qualityLabel(latestData.soil_quality, t);
+    if (latestData) return t.dash_saathi_soil_last;
+    return t.dash_saathi_awaiting;
+  })();
+
+  const cropChip = crop ? cropLabel(crop, t) : t.dash_saathi_awaiting;
+  const temp = liveNode?.sensors?.temperature?.value;
+  const weatherChip = temp != null && Number.isFinite(Number(temp))
+    ? `${Math.round(Number(temp))}°C`
+    : t.dash_saathi_awaiting;
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
-      setMessages([{ sender: 'bot', text: t.greeting }]);
+      setMessages([{ sender: 'bot', text: t.greeting, kind: 'intro' }]);
     }
-  }, [isOpen]);
+  }, [isOpen, t.greeting]);
 
   useEffect(() => {
     if (isOpen) {
-      setMessages(prev => {
+      setMessages((prev) => {
         if (prev.length > 0 && prev[0].sender === 'bot') {
           const updated = [...prev];
           updated[0] = { ...updated[0], text: t.greeting };
@@ -45,310 +228,252 @@ const AIChatbot = () => {
         return prev;
       });
     }
-  }, [lang]);
+  }, [lang, t.greeting, isOpen]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
+  useEffect(() => {
+    setUiContext({
+      currentRoute: location.pathname,
+      primaryCrop: farmer?.profile?.primaryCrop || null,
+    });
+  }, [location.pathname, farmer]);
 
   const handleSend = async (text = input) => {
     if (!text.trim()) return;
     const userMsg = text.trim();
-    setMessages(prev => [...prev, { sender: 'user', text: userMsg }]);
+    setMessages((prev) => [...prev, { sender: 'user', text: userMsg }]);
     setInput('');
     setIsTyping(true);
     setMicError('');
 
+    const ui = { ...getUiContext(), currentRoute: location.pathname };
+    const plan = planIntent(userMsg, ui);
+    const replyT = tFor(detectReplyLang(userMsg, lang));
+
     try {
-      const res = await axios.post('http://localhost:5005/api/chat', {
+      if (plan.mode === 'action' || plan.mode === 'data' || plan.mode === 'info') {
+        const results = plan.actions?.length
+          ? await executePlan(plan, { navigate, pathname: location.pathname })
+          : [];
+        rememberSaathiFocus(plan, results);
+        if (plan.mode === 'data') {
+          const data = await getSaathiData(plan, results, { nodesPack, farmer });
+          const reply = formatDataReply(plan, {
+            nodesPack: data.pack || nodesPack,
+            anomalies: data.anomalies || anomalies,
+            lastAnalysis,
+            farmer,
+          }, replyT);
+          setMessages((prev) => [...prev, { sender: 'bot', text: reply, kind: 'answer' }]);
+          return;
+        }
+        if (plan.mode === 'info') {
+          const data = await getSaathiData(plan, results, { nodesPack, farmer });
+          const packed = formatInfoReply(plan, data, results, replyT);
+          setMessages((prev) => [...prev, {
+            sender: 'bot',
+            text: packed.text,
+            blocks: packed.blocks,
+            kind: 'answer',
+          }]);
+          return;
+        }
+        const reply = formatActionReply(plan, results, replyT);
+        setMessages((prev) => [...prev, { sender: 'bot', text: reply, kind: 'answer' }]);
+        return;
+      }
+
+      const token = readSession()?.token;
+      const res = await axios.post(`${API_URL}/api/chat`, {
         message: userMsg,
         lang_code: lang,
-        context: latestData
+        context: {
+          ...compactContext,
+          ui,
+        },
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       if (res.data && res.data.success) {
-        const { response, action } = res.data.data;
-        setMessages(prev => [...prev, { sender: 'bot', text: response || '...' }]);
-        
-        // Navigation and Custom Action Handler
-        setTimeout(() => {
-          if (action.startsWith('fill_phone:')) {
-            const num = action.split(':')[1];
-            if (num) window.dispatchEvent(new CustomEvent('fill_phone', { detail: num }));
-          } else if (action.startsWith('send_sms:')) {
-            const num = action.split(':')[1];
-            navigate('/app/communication');
-            // Dispatch after a short delay to let the page mount
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent('send_sms', { detail: num }));
-            }, 600);
-          } else if (action === 'navigate_analyze') {
-            navigate('/app/analyze');
-          } else if (action === 'navigate_results') {
-            navigate('/app/results');
-          } else if (action === 'navigate_history') {
-            navigate('/app/history');
-          } else if (action === 'navigate_insights') {
-            navigate('/app/insights');
-          }
-        }, 800); // Slight delay for better UX
+        const payload = res.data.data || {};
+        const { response, action } = payload;
+        setMessages((prev) => [...prev, { sender: 'bot', text: response || '...', kind: 'answer' }]);
+
+        const remote = actionsFromChatPayload(payload);
+        if (remote.length) {
+          await executePlan({ intent: payload.intent || 'CONVERSATION', actions: remote }, { navigate, pathname: location.pathname });
+        } else if (action?.startsWith('fill_phone:')) {
+          const num = action.split(':')[1];
+          if (num) window.dispatchEvent(new CustomEvent('fill_phone', { detail: num }));
+        } else if (action?.startsWith('send_sms:')) {
+          const num = action.split(':')[1];
+          navigate('/app/communication');
+          window.setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('send_sms', { detail: num }));
+          }, 600);
+        }
       } else {
-        setMessages(prev => [...prev, { sender: 'bot', text: t.bot_default }]);
+        setMessages((prev) => [...prev, { sender: 'bot', text: t.bot_default, kind: 'answer' }]);
       }
-    } catch (err) {
-      console.error(err);
-      setMessages(prev => [...prev, { sender: 'bot', text: 'Connection to KrishiMitra AI failed.' }]);
+    } catch {
+      setMessages((prev) => [...prev, {
+        sender: 'bot',
+        text: t.dash_saathi_down,
+        kind: 'error',
+      }]);
     } finally {
       setIsTyping(false);
     }
   };
 
   const handleSpeechOutput = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const msg = new SpeechSynthesisUtterance(text);
-      const localeMap = { 'en':'en-IN','hi':'hi-IN','mr':'mr-IN','ta':'ta-IN','te':'te-IN','bn':'bn-IN','gu':'gu-IN','kn':'kn-IN','pa':'pa-IN' };
-      msg.lang = localeMap[lang] || 'en-IN';
-      const voices = window.speechSynthesis.getVoices();
-      const localVoice = voices.find(v => v.lang === msg.lang);
-      if (localVoice) msg.voice = localVoice;
-      window.speechSynthesis.speak(msg);
+    if (!('speechSynthesis' in window)) {
+      setMicError(t.dash_listen_need);
+      return;
     }
+    window.speechSynthesis.cancel();
+    const msg = new SpeechSynthesisUtterance(text);
+    msg.lang = BCP47[lang] || 'en-IN';
+    const voices = window.speechSynthesis.getVoices();
+    const localVoice = voices.find((v) => v.lang === msg.lang);
+    if (localVoice) msg.voice = localVoice;
+    window.speechSynthesis.speak(msg);
   };
 
   const handleVoiceInput = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) { setMicError("Mic unsupported"); return; }
+    if (!SpeechRecognition) {
+      setNoVoice(true);
+      setMicError(t.dash_mic_need);
+      return;
+    }
     try {
       const recognition = new SpeechRecognition();
-      const localeMap = { 'en':'en-IN','hi':'hi-IN','mr':'mr-IN','ta':'ta-IN','te':'te-IN','bn':'bn-IN','gu':'gu-IN','kn':'kn-IN','pa':'pa-IN' };
-      recognition.lang = localeMap[lang] || 'en-IN';
-      recognition.onstart = () => setMicError('🎤 Listening...');
-      recognition.onerror = (e) => setMicError(`Error: ${e.error}`);
-      recognition.onend = () => setTimeout(() => setMicError(''), 2000);
+      recognition.lang = BCP47[lang] || 'en-IN';
+      recognition.onstart = () => {
+        setListening(true);
+        setMicError(t.dash_listening);
+      };
+      recognition.onerror = (e) => {
+        setListening(false);
+        setMicError(e.error === 'not-allowed' ? t.dash_mic_denied : t.dash_mic_denied);
+      };
+      recognition.onend = () => {
+        setListening(false);
+        setTimeout(() => setMicError(''), 1800);
+      };
       recognition.onresult = (event) => {
         setMicError('');
         handleSend(event.results[0][0].transcript);
       };
       recognition.start();
-    } catch(err) { setMicError("Permission denied"); }
+    } catch {
+      setMicError(t.dash_mic_denied);
+    }
   };
 
-  const styles = {
-    wrapper: {
-      position: 'fixed',
-      bottom: '24px',
-      right: '24px',
-      zIndex: 9999,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'flex-end',
-      gap: '12px',
-    },
-    chatWindow: {
-      width: '360px',
-      maxHeight: 'calc(100vh - 120px)',
-      display: 'flex',
-      flexDirection: 'column',
-      borderRadius: '16px',
-      overflow: 'hidden',
-      background: '#FFFFFF',
-      border: '1px solid rgba(0,0,0,0.08)',
-      boxShadow: '0 12px 40px rgba(0,0,0,0.12)',
-    },
-    header: {
-      background: 'var(--primary)',
-      padding: '14px 16px',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    chatArea: {
-      flex: 1,
-      overflowY: 'auto',
-      padding: '16px 12px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      background: '#F8F5EE',
-      minHeight: '250px',
-      maxHeight: '320px',
-    },
-    userBubble: {
-      maxWidth: '80%',
-      padding: '10px 14px',
-      fontSize: '0.88rem',
-      lineHeight: 1.5,
-      background: 'var(--primary)',
-      color: 'white',
-      borderRadius: '14px 14px 2px 14px',
-      alignSelf: 'flex-end',
-    },
-    botBubble: {
-      maxWidth: '80%',
-      padding: '10px 14px',
-      fontSize: '0.88rem',
-      lineHeight: 1.5,
-      background: '#FFFFFF',
-      color: 'var(--text-main)',
-      borderRadius: '14px 14px 14px 2px',
-      border: '1px solid rgba(0,0,0,0.06)',
-      alignSelf: 'flex-start',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-    },
-    quickActions: {
-      padding: '8px 12px',
-      display: 'flex',
-      gap: '6px',
-      overflowX: 'auto',
-      background: '#FFFFFF',
-      borderTop: '1px solid rgba(0,0,0,0.06)',
-    },
-    quickBtn: {
-      background: 'rgba(46,125,50,0.08)',
-      color: 'var(--primary)',
-      border: '1px solid rgba(46,125,50,0.15)',
-      borderRadius: '20px',
-      padding: '5px 12px',
-      fontSize: '0.72rem',
-      fontWeight: 700,
-      cursor: 'pointer',
-      flexShrink: 0,
-      whiteSpace: 'nowrap',
-      transition: 'all 0.2s',
-      fontFamily: 'inherit',
-    },
-    inputArea: {
-      padding: '10px 12px',
-      background: '#FFFFFF',
-      display: 'flex',
-      gap: '8px',
-      alignItems: 'center',
-      borderTop: '1px solid rgba(0,0,0,0.06)',
-    },
-    fab: {
-      width: '56px',
-      height: '56px',
-      borderRadius: '50%',
-      background: 'var(--primary)',
-      color: 'white',
-      border: 'none',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 4px 16px rgba(46,125,50,0.35)',
-    },
-  };
+  if (hideOn) return null;
 
   return (
-    <div style={styles.wrapper}>
+    <div className="saathi-wrap">
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="saathi-panel"
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.9 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 300 }}
-            style={styles.chatWindow}
+            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
           >
-            {/* Header */}
-            <div style={styles.header}>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Sparkles size={18} color="white" />
-                </div>
-                <div>
-                  <h3 style={{ color: 'white', fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>KrishiMitra AI</h3>
-                  <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.7rem', margin: 0, fontWeight: 600 }}>● Active</p>
-                </div>
+            <header className="saathi-head">
+              <div className="saathi-mark">
+                <Sparkles size={18} />
               </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <select
-                  value={lang}
-                  onChange={(e) => setLang(e.target.value)}
-                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 700, fontSize: '0.75rem', padding: '4px 6px', outline: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  <option value="en" style={{color:'#333'}}>EN</option>
-                  <option value="hi" style={{color:'#333'}}>हिं</option>
-                  <option value="mr" style={{color:'#333'}}>मरा</option>
-                  <option value="bn" style={{color:'#333'}}>বাং</option>
-                  <option value="te" style={{color:'#333'}}>తె</option>
-                  <option value="ta" style={{color:'#333'}}>த</option>
-                  <option value="gu" style={{color:'#333'}}>ગુ</option>
-                  <option value="kn" style={{color:'#333'}}>ಕ</option>
-                  <option value="pa" style={{color:'#333'}}>ਪੰ</option>
-                </select>
-                <button onClick={() => setIsOpen(false)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', padding: '6px', borderRadius: '8px', display: 'flex' }}><X size={16} /></button>
+              <div>
+                <strong>{t.dash_saathi}</strong>
+                <p>{t.dash_saathi_expand}</p>
               </div>
-            </div>
+              <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label={t.dash_saathi_lang}>
+                {LANGUAGES.map((item) => (
+                  <option key={item.code} value={item.code}>{item.label}</option>
+                ))}
+              </select>
+              <button type="button" className="saathi-icon-btn" onClick={() => setIsOpen(false)} aria-label={t.dash_saathi_close}>
+                <X size={16} />
+              </button>
+            </header>
 
-            {/* Chat Area */}
-            <div style={styles.chatArea}>
+            <aside className="saathi-context">
+              <span><Sprout size={13} /> {t.dash_ask_soil} · {soilChip}</span>
+              <span><Droplets size={13} /> {t.dash_crop} · {cropChip}</span>
+              <span><CloudSun size={13} /> {t.dash_weather} · {weatherChip}</span>
+            </aside>
+
+            <div className="saathi-thread">
               {messages.map((m, idx) => (
-                <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: m.sender === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <div style={m.sender === 'user' ? styles.userBubble : styles.botBubble}>
-                    {m.text}
+                <div key={idx} className={`saathi-msg ${m.sender}`}>
+                  <div className={`saathi-bubble ${m.kind || ''}${m.blocks ? ' has-card' : ''}`}>
+                    {m.blocks ? <SaathiBlocks blocks={m.blocks} /> : m.text}
                   </div>
                   {m.sender === 'bot' && (
-                    <button onClick={() => handleSpeechOutput(m.text)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', marginTop: '4px', padding: '2px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem' }}>
-                      <Volume2 size={12} /> Listen
+                    <button type="button" className="saathi-listen" onClick={() => handleSpeechOutput(m.text)}>
+                      <Volume2 size={12} /> {t.dash_listen}
                     </button>
                   )}
                 </div>
               ))}
-
               {isTyping && (
-                <div style={{ ...styles.botBubble, display: 'flex', gap: '5px', padding: '12px 18px' }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10B981', animation: 'float 1s ease-in-out infinite' }} />
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10B981', animation: 'float 1s 0.2s ease-in-out infinite' }} />
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10B981', animation: 'float 1s 0.4s ease-in-out infinite' }} />
+                <div className="saathi-msg bot">
+                  <div className="saathi-bubble">{t.dash_saathi_connecting}</div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Actions */}
-            <div style={styles.quickActions}>
-              {[t.quick_soil, t.quick_crop, t.quick_water].map((q, i) => (
-                <button key={i} onClick={() => handleSend(q)} style={styles.quickBtn}>{q}</button>
+            <div className="saathi-suggest">
+              {[t.dash_suggest_1, t.dash_suggest_2, t.dash_suggest_3, t.dash_suggest_4].map((q) => (
+                <button key={q} type="button" onClick={() => handleSend(q)}>{q}</button>
               ))}
             </div>
 
-            {/* Input Area */}
-            <div style={styles.inputArea}>
-              {micError && (
-                <div style={{ position: 'absolute', bottom: '60px', left: '12px', right: '12px', fontSize: '0.7rem', color: micError.includes('Listen') ? '#10B981' : '#EF4444', background: micError.includes('Listen') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '4px 10px', borderRadius: '8px', fontWeight: 'bold', textAlign: 'center' }}>{micError}</div>
-              )}
-              <button onClick={handleVoiceInput} style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.06)', color: 'var(--text-muted)', cursor: 'pointer', padding: '8px', borderRadius: '10px', display: 'flex' }}>
-                {micError === 'Mic unsupported' ? <MicOff size={18}/> : <Mic size={18} />}
+            <form
+              className="saathi-composer"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
+              }}
+            >
+              {micError && <p className={`saathi-mic-note${listening ? ' is-live' : ''}`}>{micError}</p>}
+              <button type="button" onClick={handleVoiceInput} aria-label={t.dash_voice}>
+                {noVoice ? <MicOff size={18} /> : <Mic size={18} />}
               </button>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder={t.chat_placeholder}
-                style={{ flex: 1, border: '1px solid rgba(0,0,0,0.08)', background: '#F8F5EE', padding: '10px 14px', borderRadius: '12px', outline: 'none', color: 'var(--text-main)', fontSize: '0.88rem', fontFamily: 'inherit' }}
+                aria-label={t.dash_talk}
               />
-              <button onClick={() => handleSend()} style={{ background: 'var(--primary)', border: 'none', color: 'white', cursor: 'pointer', padding: '10px', borderRadius: '12px', display: 'flex' }}>
+              <button type="submit" className="saathi-send" aria-label={t.dash_send}>
                 <Send size={16} />
               </button>
-            </div>
+            </form>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Floating Button */}
-      <motion.button
+      <button
+        type="button"
+        className="chat-fab saathi-fab"
         onClick={() => setIsOpen(!isOpen)}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.92 }}
-        style={styles.fab}
+        aria-label={isOpen ? t.dash_saathi_close : t.dash_saathi_open}
       >
-        {isOpen ? <X size={24} /> : <Bot size={24} />}
-      </motion.button>
+        {isOpen ? <X size={24} /> : <Sparkles size={22} />}
+      </button>
     </div>
   );
 };

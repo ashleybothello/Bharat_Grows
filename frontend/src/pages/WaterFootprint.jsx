@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Droplets, TrendingDown, CloudRain, ShieldCheck, Zap, Activity, Filter, CloudSnow } from 'lucide-react';
 import { motion } from 'framer-motion';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
 import { PieChart, Pie, Cell, Tooltip as RTTooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 export default function WaterFootprint() {
+    const { t } = useLang();
     const [acres, setAcres] = useState(2);
     const [method, setMethod] = useState('Flood');
 
@@ -39,26 +42,8 @@ export default function WaterFootprint() {
     ];
 
     return (
-        <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <div style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', padding: '0.6rem', borderRadius: '0.75rem', color: 'white' }}>
-                        <Droplets size={28} />
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-                            Water Footprint Analytics
-                        </h1>
-                        <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-                            Optimize irrigation methods and track aquifier stress & water savings
-                        </p>
-                    </div>
-                </div>
-                <div style={{ background: '#EFF6FF', color: '#1D4ED8', padding: '0.4rem 0.8rem', borderRadius: '0.6rem', fontWeight: 700, fontSize: '0.82rem', border: '1px solid #BFDBFE' }}>
-                    💧 Regional Aquifer Status: Moderate Stress
-                </div>
-            </div>
+        <div className="farm-page">
+            <PageHeader kicker={t.pg_more_water} title={t.pg_more_water} lede={t.pg_more_water_d} />
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
 

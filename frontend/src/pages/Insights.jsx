@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
 import axios from 'axios';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -8,10 +7,15 @@ import {
   AreaChart, Area,
   RadialBarChart, RadialBar,
 } from 'recharts';
-import { Loader2, Brain, Layers, Target, TrendingUp, Cpu, Sprout } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useLang } from '../context/LanguageContext';
+import { API_URL } from '../utils/api';
+import PageHeader from '../components/PageHeader';
+import EmptyState from '../components/EmptyState';
+import { qualityLabel } from './dashboard/helpers';
 
-const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
+const COLORS = ['#2c5a3c', '#8a5a38', '#5d6b5e', '#0e1a12', '#c9891a', '#3d6f4e', '#6b5344', '#1f3d2a'];
+const QUALITY_COLORS = { Good: '#2c5a3c', Moderate: '#c9891a', Poor: '#b42318' };
 
 const Insights = () => {
   const [metrics, setMetrics] = useState(null);
@@ -23,13 +27,13 @@ const Insights = () => {
     const fetchAll = async () => {
       try {
         const [metricsRes, historyRes] = await Promise.all([
-          axios.get('http://localhost:5005/metrics'),
-          axios.get('http://localhost:5005/history'),
+          axios.get(`${API_URL}/metrics`),
+          axios.get(`${API_URL}/history`),
         ]);
         setMetrics(metricsRes.data);
         setHistory(historyRes.data || []);
       } catch (error) {
-        console.error("Error fetching data", error);
+        console.error('Error fetching data', error);
       } finally {
         setLoading(false);
       }
@@ -37,47 +41,44 @@ const Insights = () => {
     fetchAll();
   }, []);
 
-  if (loading) return <div style={{ textAlign: 'center', marginTop: '4rem' }}><Loader2 className="animate-spin" size={48} color="var(--primary)" /></div>;
-  if (!metrics) return <div style={{ textAlign: 'center', marginTop: '4rem', color: 'var(--text-muted)' }}>Error loading insights. Ensure ML service is running.</div>;
-
-  // ━━━ DATA PROCESSING ━━━
-  const accuracy = (metrics.accuracy * 100).toFixed(1);
-
-  // Feature importance
-  let featureData = [];
-  if (metrics.feature_importance) {
-    featureData = Object.keys(metrics.feature_importance).map(key => ({
-      name: key.charAt(0).toUpperCase() + key.slice(1),
-      value: parseFloat((metrics.feature_importance[key] * 100).toFixed(2)),
-      fullMark: 30,
-    })).sort((a, b) => b.value - a.value);
-  } else {
-    featureData = [
-      { name: 'Nitrogen', value: 22, fullMark: 30 },
-      { name: 'Phosphorus', value: 20, fullMark: 30 },
-      { name: 'Potassium', value: 18, fullMark: 30 },
-      { name: 'Moisture', value: 15, fullMark: 30 },
-      { name: 'pH', value: 12, fullMark: 30 },
-      { name: 'Rainfall', value: 8, fullMark: 30 },
-      { name: 'Temperature', value: 5, fullMark: 30 },
-    ];
+  if (loading) {
+    return (
+      <div className="farm-page" style={{ textAlign: 'center', paddingTop: '3rem' }}>
+        <Loader2 className="animate-spin" size={32} color="var(--leaf)" />
+      </div>
+    );
   }
 
-  // Crop class distribution from history
+  if (!metrics) {
+    return (
+      <div className="farm-page">
+        <PageHeader title={t.insights_title} lede={t.insights_subtitle} />
+        <EmptyState title={t.pg_ins_fail} body={t.pg_ins_fail} />
+      </div>
+    );
+  }
+
+  const accuracy = metrics.accuracy != null ? (metrics.accuracy * 100).toFixed(1) : null;
+  let featureData = [];
+  if (metrics.feature_importance) {
+    featureData = Object.keys(metrics.feature_importance).map((key) => ({
+      name: key.charAt(0).toUpperCase() + key.slice(1),
+      value: parseFloat((metrics.feature_importance[key] * 100).toFixed(2)),
+    })).sort((a, b) => b.value - a.value);
+  }
+
   const cropCounts = {};
-  history.forEach(h => {
-    const crops = h.recommended_crops || [];
-    crops.forEach(c => { cropCounts[c] = (cropCounts[c] || 0) + 1; });
+  history.forEach((h) => {
+    (h.recommended_crops || []).forEach((c) => { cropCounts[c] = (cropCounts[c] || 0) + 1; });
   });
-  const cropPieData = Object.keys(cropCounts).map(k => ({ name: k, value: cropCounts[k] })).sort((a, b) => b.value - a.value).slice(0, 8);
+  const cropPieData = Object.keys(cropCounts).map((k) => ({ name: k, value: cropCounts[k] })).sort((a, b) => b.value - a.value).slice(0, 8);
 
-  // Soil quality distribution
   const qualityCounts = { Good: 0, Moderate: 0, Poor: 0 };
-  history.forEach(h => { if (h.soil_quality) qualityCounts[h.soil_quality]++; });
-  const qualityData = Object.keys(qualityCounts).map(k => ({ name: k, value: qualityCounts[k] }));
-  const qualityColors = { Good: '#10B981', Moderate: '#F59E0B', Poor: '#EF4444' };
+  history.forEach((h) => { if (h.soil_quality) qualityCounts[h.soil_quality]++; });
+  const qualityData = Object.keys(qualityCounts)
+    .filter((k) => qualityCounts[k] > 0)
+    .map((k) => ({ name: qualityLabel(k, t), key: k, value: qualityCounts[k] }));
 
-  // NPK trend over analyses
   const trendData = history.slice(0, 15).reverse().map((h, i) => ({
     analysis: `#${i + 1}`,
     N: h.n,
@@ -86,248 +87,152 @@ const Insights = () => {
     pH: h.ph,
   }));
 
-  // Accuracy gauge
-  const gaugeData = [{ name: 'Accuracy', value: parseFloat(accuracy), fill: '#10B981' }];
-
-  // Card style helper
-  const cardAnim = (delay = 0) => ({ initial: { y: 30, opacity: 0 }, animate: { y: 0, opacity: 1 }, transition: { duration: 0.5, delay } });
+  const gaugeData = accuracy != null ? [{ name: t.pg_ins_acc, value: parseFloat(accuracy), fill: '#2c5a3c' }] : [];
+  const info = metrics.dataset_info || {};
+  const tooltip = { background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--ink)' };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: '1100px', margin: '0 auto' }}>
-      <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-        <h1 className="heading" style={{ fontSize: '2rem' }}>{t.insights_title}</h1>
-        <p className="subheading">{t.insights_subtitle}</p>
-      </div>
+    <div className="farm-page">
+      <PageHeader kicker={t.nav_insights} title={t.insights_title} lede={t.insights_subtitle} />
 
-      {/* ━━━ ROW 1: Accuracy Gauge + Feature Radar ━━━ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
-
-        {/* Accuracy Radial Gauge */}
-        <motion.div {...cardAnim(0)} className="glass" style={{ padding: '2rem', textAlign: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center', marginBottom: '1rem' }}>
-            <Target size={20} color="var(--primary)" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Model Accuracy</h2>
-          </div>
-          <div style={{ width: '100%', height: 220 }}>
-            <ResponsiveContainer>
-              <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="90%" startAngle={180} endAngle={0} data={gaugeData} barSize={20}>
-                <RadialBar background={{ fill: 'rgba(0,0,0,0.05)' }} clockWise dataKey="value" cornerRadius={10} />
-              </RadialBarChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{ marginTop: '-3.5rem', position: 'relative' }}>
-            <div style={{ fontSize: '3rem', fontWeight: 900, color: 'var(--primary)' }}>{accuracy}%</div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>VotingClassifier (XGBoost + RF)</p>
-          </div>
-
-          {/* How Accuracy is Calculated */}
-          <div style={{ marginTop: '1.5rem', textAlign: 'left', background: 'var(--surface-alt)', borderRadius: '0.75rem', padding: '1.25rem', borderLeft: '3px solid var(--primary)' }}>
-            <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-heading)', margin: '0 0 0.75rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              📐 How Accuracy is Calculated
-            </h3>
-
-            {/* Dataset Stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              {[
-                { label: 'Total Samples', value: metrics.dataset_info?.total_samples || '4800', color: '#3B82F6' },
-                { label: 'Total Crops', value: metrics.dataset_info?.total_crops || '37', color: '#10B981' },
-                { label: 'Train Set (80%)', value: metrics.dataset_info?.train_samples || '3840', color: '#8B5CF6' },
-                { label: 'Test Set (20%)', value: metrics.dataset_info?.test_samples || '960', color: '#F59E0B' },
-              ].map((stat, i) => (
-                <div key={i} style={{ background: `${stat.color}0A`, border: `1px solid ${stat.color}20`, borderRadius: '0.5rem', padding: '0.5rem 0.6rem', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: stat.color }}>{stat.value}</div>
-                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600 }}>{stat.label}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Formula */}
-            <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: '0.5rem', padding: '0.75rem', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.3rem', fontFamily: 'inherit', fontWeight: 600 }}>Formula:</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-heading)', fontWeight: 700 }}>
-                Accuracy = Correct Predictions / Total Test Samples
+      <div className="rs-grid">
+        <section className="az-group">
+          <h2>{t.pg_ins_acc}</h2>
+          {accuracy != null ? (
+            <>
+              <div style={{ width: '100%', height: 180 }}>
+                <ResponsiveContainer>
+                  <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="90%" startAngle={180} endAngle={0} data={gaugeData} barSize={16}>
+                    <RadialBar background={{ fill: 'rgba(20,28,22,0.06)' }} clockWise dataKey="value" cornerRadius={8} />
+                  </RadialBarChart>
+                </ResponsiveContainer>
               </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--primary)', fontWeight: 700, marginTop: '0.2rem' }}>
-                = {Math.round(parseFloat(accuracy) / 100 * (metrics.dataset_info?.test_samples || 960))} / {metrics.dataset_info?.test_samples || 960} = {accuracy}%
-              </div>
-            </div>
+              <p className="rs-crop" style={{ textAlign: 'center', fontSize: '2.2rem' }}>{accuracy}%</p>
+              {(info.total_samples || info.test_samples) && (
+                <p className="farm-note" style={{ textAlign: 'center' }}>
+                  {info.total_samples ? `${info.total_samples}` : ''}
+                  {info.test_samples ? ` · ${info.test_samples}` : ''}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="farm-note">{t.pg_ins_no_feat}</p>
+          )}
+        </section>
 
-            {/* Steps explanation */}
-            <ol style={{ padding: '0 0 0 1.2rem', margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.8 }}>
-              <li><strong style={{ color: 'var(--text-heading)' }}>Data Split:</strong> 4800 rows → 80% train (3840) + 20% test (960)</li>
-              <li><strong style={{ color: 'var(--text-heading)' }}>Feature Scaling:</strong> StandardScaler normalizes N, P, K, temp, humidity, pH, rainfall</li>
-              <li><strong style={{ color: 'var(--text-heading)' }}>Ensemble Training:</strong> XGBoost (200 trees) + Random Forest (200 trees) combined via soft-voting</li>
-              <li><strong style={{ color: 'var(--text-heading)' }}>Evaluation:</strong> Model predicts on the unseen 960 test samples; correct predictions ÷ total = accuracy</li>
-            </ol>
-          </div>
-        </motion.div>
-
-        {/* Feature Importance Radar */}
-        <motion.div {...cardAnim(0.1)} className="glass" style={{ padding: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Brain size={20} color="#8B5CF6" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Feature Radar</h2>
-          </div>
+        <section className="az-group">
+          <h2>{t.pg_ins_radar}</h2>
           <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <RadarChart data={featureData}>
-                <PolarGrid stroke="rgba(0,0,0,0.1)" />
-                <PolarAngleAxis dataKey="name" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
-                <PolarRadiusAxis tick={false} axisLine={false} />
-                <Radar name="Importance" dataKey="value" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.25} strokeWidth={2} />
-              </RadarChart>
-            </ResponsiveContainer>
+            {featureData.length ? (
+              <ResponsiveContainer>
+                <RadarChart data={featureData}>
+                  <PolarGrid stroke="rgba(20,28,22,0.12)" />
+                  <PolarAngleAxis dataKey="name" tick={{ fill: 'var(--sage)', fontSize: 11 }} />
+                  <PolarRadiusAxis tick={false} axisLine={false} />
+                  <Radar dataKey="value" stroke="#0e1a12" fill="#2c5a3c" fillOpacity={0.2} strokeWidth={1.6} />
+                </RadarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="farm-note">{t.pg_ins_no_feat}</p>
+            )}
           </div>
-        </motion.div>
+        </section>
       </div>
 
-      {/* ━━━ ROW 2: Feature Bar Chart + Soil Quality Pie ━━━ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
-
-        {/* Feature Importance Bar */}
-        <motion.div {...cardAnim(0.15)} className="glass" style={{ padding: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Layers size={20} color="#3B82F6" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Feature Importance</h2>
-          </div>
+      <div className="rs-grid">
+        <section className="az-group">
+          <h2>{t.pg_ins_feat}</h2>
           <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <BarChart data={featureData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.06)" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-heading)' }} cursor={{ fill: 'rgba(59,130,246,0.06)' }} />
-                <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                  {featureData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {featureData.length ? (
+              <ResponsiveContainer>
+                <BarChart data={featureData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(20,28,22,0.08)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={tooltip} />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} fill="#2c5a3c" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="farm-note">{t.pg_ins_no_feat}</p>
+            )}
           </div>
-        </motion.div>
+        </section>
 
-        {/* Soil Quality Distribution Pie */}
-        <motion.div {...cardAnim(0.2)} className="glass" style={{ padding: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Cpu size={20} color="#F59E0B" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Soil Quality Distribution</h2>
-          </div>
+        <section className="az-group">
+          <h2>{t.pg_ins_qual}</h2>
           <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={qualityData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={4} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                  {qualityData.map((entry, i) => (
-                    <Cell key={i} fill={qualityColors[entry.name] || COLORS[i]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-heading)' }} />
-              </PieChart>
-            </ResponsiveContainer>
+            {qualityData.length ? (
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={qualityData} cx="50%" cy="50%" innerRadius={58} outerRadius={92} paddingAngle={3} dataKey="value" label={({ name }) => name}>
+                    {qualityData.map((entry) => (
+                      <Cell key={entry.key} fill={QUALITY_COLORS[entry.key] || COLORS[0]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={tooltip} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="farm-note">{t.pg_ins_empty}</p>
+            )}
           </div>
-          {history.length === 0 && <p style={{ textAlign: 'center', color: '#64748B', fontSize: '0.8rem' }}>Run analyses to populate this chart</p>}
-        </motion.div>
+        </section>
       </div>
 
-      {/* ━━━ ROW 3: NPK Trend Area Chart ━━━ */}
       {trendData.length > 0 && (
-        <motion.div {...cardAnim(0.25)} className="glass" style={{ padding: '2rem', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <TrendingUp size={20} color="#10B981" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>NPK & pH Trend Across Analyses</h2>
-          </div>
-          <div style={{ width: '100%', height: 300 }}>
+        <section className="az-group">
+          <h2>{t.pg_ins_trend}</h2>
+          <div style={{ width: '100%', height: 280 }}>
             <ResponsiveContainer>
               <AreaChart data={trendData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
-                <defs>
-                  <linearGradient id="gradN" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gradP" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gradK" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#F59E0B" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gradPH" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#EC4899" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#EC4899" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                <XAxis dataKey="analysis" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-heading)' }} />
-                <Area type="monotone" dataKey="N" stroke="#10B981" fill="url(#gradN)" strokeWidth={2} name="Nitrogen" />
-                <Area type="monotone" dataKey="P" stroke="#3B82F6" fill="url(#gradP)" strokeWidth={2} name="Phosphorus" />
-                <Area type="monotone" dataKey="K" stroke="#F59E0B" fill="url(#gradK)" strokeWidth={2} name="Potassium" />
-                <Area type="monotone" dataKey="pH" stroke="#EC4899" fill="url(#gradPH)" strokeWidth={2} name="pH" />
-                <Legend wrapperStyle={{ color: '#94A3B8', fontSize: '0.85rem', paddingTop: '0.5rem' }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(20,28,22,0.08)" />
+                <XAxis dataKey="analysis" tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tooltip} />
+                <Area type="monotone" dataKey="N" stroke="#2c5a3c" fill="#2c5a3c22" strokeWidth={1.8} name="N" />
+                <Area type="monotone" dataKey="P" stroke="#5d6b5e" fill="#5d6b5e18" strokeWidth={1.8} name="P" />
+                <Area type="monotone" dataKey="K" stroke="#8a5a38" fill="#8a5a3820" strokeWidth={1.8} name="K" />
+                <Area type="monotone" dataKey="pH" stroke="#0e1a12" fill="#0e1a1210" strokeWidth={1.6} name="pH" />
+                <Legend wrapperStyle={{ color: 'var(--sage)', fontSize: '0.85rem' }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </motion.div>
+        </section>
       )}
 
-      {/* ━━━ ROW 4: Crop Pie + Supported Classes ━━━ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-
-        {/* Crop Recommendations Pie */}
+      <div className="rs-grid">
         {cropPieData.length > 0 && (
-          <motion.div {...cardAnim(0.3)} className="glass" style={{ padding: '2rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-              <Sprout size={20} color="#14B8A6" />
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Top Recommended Crops</h2>
-            </div>
-            <div style={{ width: '100%', height: 280 }}>
+          <section className="az-group">
+            <h2>{t.pg_ins_crops}</h2>
+            <div style={{ width: '100%', height: 260 }}>
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={cropPieData} cx="50%" cy="50%" outerRadius={95} dataKey="value" label={({ name }) => name}>
+                  <Pie data={cropPieData} cx="50%" cy="50%" outerRadius={90} dataKey="value" label={({ name }) => name}>
                     {cropPieData.map((_, i) => (
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-heading)' }} />
+                  <Tooltip contentStyle={tooltip} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-          </motion.div>
+          </section>
         )}
 
-        {/* All Supported Classes */}
-        <motion.div {...cardAnim(0.35)} className="glass" style={{ padding: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
-            <Layers size={20} color="#EC4899" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-heading)', margin: 0 }}>Predictable Crop Classes</h2>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {metrics.classes?.map((cls, i) => (
-              <span key={i} style={{
-                background: `${COLORS[i % COLORS.length]}15`,
-                color: COLORS[i % COLORS.length],
-                padding: '0.45rem 0.9rem',
-                borderRadius: '2rem',
-                fontSize: '0.82rem',
-                fontWeight: 600,
-                border: `1px solid ${COLORS[i % COLORS.length]}30`,
-              }}>
-                {cls}
-              </span>
+        <section className="az-group">
+          <h2>{t.pg_ins_classes}</h2>
+          <div className="az-chips">
+            {(metrics.classes || []).map((cls) => (
+              <span key={cls}>{cls}</span>
             ))}
           </div>
-          <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-alt)', borderRadius: '0.75rem', borderLeft: '3px solid var(--primary)' }}>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-              <strong style={{ color: 'var(--text-heading)' }}>{metrics.classes?.length || 0}</strong> unique crop types supported by the model.
-              The VotingClassifier combines XGBoost and Random Forest predictions using soft voting for maximum robustness.
-            </p>
-          </div>
-        </motion.div>
+          <p className="farm-note" style={{ marginTop: '1rem' }}>
+            {metrics.classes?.length || 0} {t.pg_ins_classes_n}
+          </p>
+        </section>
       </div>
-
-    </motion.div>
+    </div>
   );
 };
 

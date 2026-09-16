@@ -1,13 +1,29 @@
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const { pool, initDB } = require('./db');
 const axios = require('axios');
-require('dotenv').config();
 const { GoogleGenAI } = require('@google/genai');
+const otpAuth = require('./otpAuth');
+const marketService = require('./services/market/marketService');
+const ml = require('./routes/ml');
+const telemetry = require('./routes/telemetry');
+const hardware = require('./routes/hardware');
+const simulationEngine = require('./services/telemetry/simulationEngine');
+const espIngest = require('./services/telemetry/espIngest');
+const saathiContext = require('./services/saathi/farmContext');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'BharatGrow API is running',
+  });
+});
 
 // Initialize Database
 initDB();
@@ -18,56 +34,123 @@ app.post('/predict', async (req, res) => {
   try {
     const { n, p, k, ph, moisture, temperature, humidity, rainfall } = req.body;
 
-    // Optional: generate fake moisture if not provided (as per some use cases)
-    const finalMoisture = moisture !== undefined ? moisture : (Math.random() * 80 + 10);
-    // Optional: generate fake rainfall if not provided
-    const finalRainfall = rainfall !== undefined ? rainfall : (Math.random() * 200 + 50);
+    // Every reading must be supplied. Moisture and rainfall were previously
+    // filled with Math.random() when absent, which fed invented values into the
+    // model and into the farmer's history. Missing input is now an error.
+    const readings = { n, p, k, ph, moisture, temperature, humidity, rainfall };
+    const missing = Object.entries(readings)
+      .filter(([, value]) => value === undefined || value === null || value === '' || !Number.isFinite(Number(value)))
+      .map(([key]) => key);
 
-    // 1. Insert into soil_data
-    const insertSoilQuery = `
-      INSERT INTO soil_data (n, p, k, ph, moisture, temperature, humidity, rainfall)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id;
-    `;
-    const soilResult = await pool.query(insertSoilQuery, [
-      n, p, k, ph, finalMoisture, temperature, humidity, finalRainfall
-    ]);
-    const soilId = soilResult.rows[0].id;
+    if (missing.length) {
+      return res.status(400).json({
+        code: 'INVALID_INPUT',
+        error: `Missing or non-numeric required field(s): ${missing.join(', ')}`,
+      });
+    }
 
-    // 2. Call ML Service
+    const finalMoisture = Number(moisture);
+    const finalRainfall = Number(rainfall);
+
+    // 1. Call the ML service first, so a database problem can never be reported
+    //    as a model failure and can never discard a valid prediction.
     const mlPayload = {
       n, p, k, ph, moisture: finalMoisture, temperature, humidity, rainfall: finalRainfall
     };
-    
-    const mlResponse = await axios.post(`${ML_SERVICE_URL}/api/predict`, mlPayload);
+
+    let mlResponse;
+    try {
+      mlResponse = await axios.post(`${ML_SERVICE_URL}/api/predict`, mlPayload, {
+        timeout: Number(process.env.ML_SERVICE_TIMEOUT_MS || 20000),
+      });
+    } catch (mlError) {
+      console.error('[predict] ML service error:', mlError.response?.data || mlError.message);
+
+      if (mlError.response?.status === 422) {
+        return res.status(422).json({
+          code: 'ML_INVALID_INPUT',
+          error: 'The ML service rejected these readings.',
+        });
+      }
+      if (!mlError.response) {
+        const timedOut = mlError.code === 'ECONNABORTED' || mlError.code === 'ETIMEDOUT';
+        return res.status(503).json({
+          code: timedOut ? 'ML_SERVICE_TIMEOUT' : 'ML_SERVICE_UNAVAILABLE',
+          error: timedOut
+            ? 'The ML service did not respond in time.'
+            : `The ML service is not reachable at ${ML_SERVICE_URL}.`,
+        });
+      }
+      return res.status(502).json({
+        code: 'ML_SERVICE_ERROR',
+        error: 'The ML service could not complete this prediction.',
+      });
+    }
+
     const { soil_quality, recommended_crops, improvement_tips, prediction_confidence, crop_confidences, model_accuracy } = mlResponse.data;
 
-    // 3. Insert into predictions
-    const insertPredictionQuery = `
-      INSERT INTO predictions (soil_id, soil_quality, recommended_crops, improvement_tips)
-      VALUES ($1, $2, $3, $4) RETURNING id;
-    `;
-    await pool.query(insertPredictionQuery, [
-      soilId,
-      soil_quality,
-      JSON.stringify(recommended_crops),
-      JSON.stringify(improvement_tips)
-    ]);
+    // 2. Persist the reading and prediction. Best-effort: history is valuable but
+    //    it must not cost the farmer a result they are waiting on.
+    let saved = false;
+    let saveError = null;
+    try {
+      const soilResult = await pool.query(
+        `INSERT INTO soil_data (n, p, k, ph, moisture, temperature, humidity, rainfall)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id;`,
+        [n, p, k, ph, finalMoisture, temperature, humidity, finalRainfall]
+      );
 
-    // 4. Return the required output
+      await pool.query(
+        `INSERT INTO predictions (soil_id, soil_quality, recommended_crops, improvement_tips)
+         VALUES ($1, $2, $3, $4);`,
+        [
+          soilResult.rows[0].id,
+          soil_quality,
+          JSON.stringify(recommended_crops),
+          JSON.stringify(improvement_tips),
+        ]
+      );
+      saved = true;
+    } catch (dbError) {
+      console.error('[predict] persistence failed:', dbError.message);
+      saveError = 'Prediction succeeded but could not be saved to history.';
+    }
+
+    // 3. Return the real model output, unchanged in shape.
     res.json({
       soil_quality,
       recommended_crops,
       improvement_tips,
       prediction_confidence,
       crop_confidences,
-      model_accuracy
+      model_accuracy,
+      saved,
+      ...(saveError ? { save_error: saveError } : {}),
     });
 
   } catch (error) {
     console.error("Error during prediction:", error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to process prediction.' });
+    res.status(500).json({ code: 'PREDICTION_FAILED', error: 'Failed to process prediction.' });
   }
 });
+
+// ━━━━━━━━━━━━━━━ ML SERVICE (crop model + rainfall intelligence + decision engine) ━━━━━━━━━━━━━━━
+app.use('/api/ml', ml.router);
+app.post('/api/ml/crop-decision', ml.createCropDecisionHandler(pool));
+
+// ━━━━━━━━━━━━━━━ SENSOR TELEMETRY (simulated IoT nodes) ━━━━━━━━━━━━━━━
+// Nodes, readings, graph series, anomalies and simulation control. Every route
+// is scoped to the authenticated farmer inside routes/telemetry.js.
+// Sensor telemetry lives under these prefixes only. Mounting the router on
+// all of `/api` previously ran farmer-auth on OTP, market, ML and chat.
+const telemetryPrefix = /^\/(nodes|telemetry|anomalies|simulation)(\/|$)/;
+app.use('/api', (req, res, next) => {
+  if (telemetryPrefix.test(req.path)) return telemetry.router(req, res, next);
+  return next();
+});
+
+// Physical ESP32 Hardware Beta — public live read, separate from simulated nodes.
+app.use('/api/hardware', hardware.router);
 
 // REAL SMS — Fast2SMS API (No simulation)
 app.post('/api/send-sms', async (req, res) => {
@@ -104,6 +187,7 @@ app.post('/api/send-sms', async (req, res) => {
         numbers: cleanNumber,
       },
       headers: {
+        authorization: apiKey,
         'cache-control': 'no-cache',
       }
     });
@@ -167,190 +251,25 @@ app.get('/history', async (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━ OTP AUTHENTICATION ━━━━━━━━━━━━━━━
-
-// Generate a random 6-digit OTP
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-// POST /api/send-otp — Generate OTP, store in DB, send via Fast2SMS
-app.post('/api/send-otp', async (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({ success: false, error: 'Phone number is required.' });
-    }
-
-    const cleanNumber = phone.replace(/^\+?91/, '').replace(/^0/, '').trim();
-
-    if (cleanNumber.length !== 10 || !/^\d+$/.test(cleanNumber)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
-    }
-
-    // Rate limit: max 5 OTPs per phone in last 10 minutes
-    const rateCheck = await pool.query(
-      `SELECT COUNT(*) FROM otp_store WHERE phone = $1 AND created_at > NOW() - INTERVAL '10 minutes'`,
-      [cleanNumber]
-    );
-    if (parseInt(rateCheck.rows[0].count) >= 5) {
-      return res.status(429).json({ success: false, error: 'Too many OTP requests. Please wait a few minutes.' });
-    }
-
-    // Check if farmer already exists
-    const existingFarmer = await pool.query('SELECT id FROM farmers WHERE phone = $1', [cleanNumber]);
-    const isNewUser = existingFarmer.rows.length === 0;
-
-    // Generate OTP — using default '123456' for dev/testing (switch to generateOTP() when Fast2SMS is active)
-    const otp = '123456'; // generateOTP();
-    const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes from now
-
-    // Invalidate any previous OTPs for this phone
-    await pool.query('DELETE FROM otp_store WHERE phone = $1', [cleanNumber]);
-
-    // Store new OTP
-    await pool.query(
-      'INSERT INTO otp_store (phone, otp, expires_at) VALUES ($1, $2, $3)',
-      [cleanNumber, otp, expiresAt]
-    );
-
-    console.log(`[OTP] Generated for ${cleanNumber}: ${otp} (expires: ${expiresAt.toISOString()})`);
-
-    // Send OTP via Fast2SMS
-    const apiKey = process.env.FAST2SMS_API_KEY;
-
-    if (!apiKey) {
-      console.error('[OTP FATAL] FAST2SMS_API_KEY not set in .env');
-      // Still return success so dev/testing works (OTP is logged to console)
-      return res.json({ success: true, isNewUser, message: 'OTP generated (SMS API key not configured — check server console for OTP).' });
-    }
-
-    const smsMessage = `Your SoilAI verification code is ${otp}. Do not share this with anyone. Code expires in 2 minutes.`;
-
-    try {
-      const smsResponse = await axios.get('https://www.fast2sms.com/dev/bulkV2', {
-        params: {
-          authorization: apiKey,
-          route: 'q',
-          message: smsMessage,
-          language: 'english',
-          flash: 0,
-          numbers: cleanNumber,
-        },
-        headers: { 'cache-control': 'no-cache' },
-      });
-
-      console.log('[OTP SMS RESPONSE]:', JSON.stringify(smsResponse.data));
-
-      if (smsResponse.data && smsResponse.data.return === true) {
-        return res.json({ success: true, isNewUser, message: 'OTP sent successfully.' });
-      } else {
-        console.error('[OTP SMS FAIL]:', smsResponse.data);
-        // Still return success — OTP was stored, farmer can use it (logged to console)
-        return res.json({ success: true, isNewUser, message: 'OTP generated. SMS delivery may be delayed.' });
-      }
-    } catch (smsErr) {
-      console.error('[OTP SMS ERROR]:', smsErr.response?.data || smsErr.message);
-      // OTP is still in DB and logged — allow verification
-      return res.json({ success: true, isNewUser, message: 'OTP generated. SMS delivery may be delayed.' });
-    }
-
-  } catch (error) {
-    console.error('[OTP ERROR]:', error.message);
-    return res.status(500).json({ success: false, error: 'Failed to send OTP. Please try again.' });
-  }
-});
-
-// POST /api/verify-otp — Verify OTP and login/register farmer
-app.post('/api/verify-otp', async (req, res) => {
-  try {
-    const { phone, otp, name, village } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({ success: false, error: 'Phone and OTP are required.' });
-    }
-
-    const cleanNumber = phone.replace(/^\+?91/, '').replace(/^0/, '').trim();
-
-    if (cleanNumber.length !== 10 || !/^\d+$/.test(cleanNumber)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
-    }
-
-    if (otp.length !== 6 || !/^\d+$/.test(otp)) {
-      return res.status(400).json({ success: false, error: 'Invalid OTP format.' });
-    }
-
-    // Find the OTP record
-    const otpRecord = await pool.query(
-      'SELECT * FROM otp_store WHERE phone = $1 AND otp = $2 AND verified = FALSE ORDER BY created_at DESC LIMIT 1',
-      [cleanNumber, otp]
-    );
-
-    if (otpRecord.rows.length === 0) {
-      return res.status(401).json({ success: false, error: 'Invalid OTP. Please check and try again.' });
-    }
-
-    const record = otpRecord.rows[0];
-
-    // Check expiry (2 minutes)
-    if (new Date() > new Date(record.expires_at)) {
-      // Clean up expired OTP
-      await pool.query('DELETE FROM otp_store WHERE id = $1', [record.id]);
-      return res.status(401).json({ success: false, error: 'OTP has expired. Please request a new one.' });
-    }
-
-    // Mark OTP as verified and clean up
-    await pool.query('DELETE FROM otp_store WHERE phone = $1', [cleanNumber]);
-
-    // Check if farmer exists or create new
-    let farmer;
-    const existingFarmer = await pool.query('SELECT * FROM farmers WHERE phone = $1', [cleanNumber]);
-
-    if (existingFarmer.rows.length > 0) {
-      // Existing farmer — update last login
-      const updated = await pool.query(
-        'UPDATE farmers SET last_login = NOW() WHERE phone = $1 RETURNING *',
-        [cleanNumber]
-      );
-      farmer = updated.rows[0];
-      console.log(`[AUTH] Farmer logged in: ${farmer.name || 'N/A'} (${cleanNumber})`);
-    } else {
-      // New farmer — create account
-      const inserted = await pool.query(
-        'INSERT INTO farmers (phone, name, village) VALUES ($1, $2, $3) RETURNING *',
-        [cleanNumber, name || null, village || null]
-      );
-      farmer = inserted.rows[0];
-      console.log(`[AUTH] New farmer registered: ${farmer.name || 'N/A'} (${cleanNumber})`);
-    }
-
-    return res.json({
-      success: true,
-      message: 'Login successful!',
-      farmer: {
-        id: farmer.id,
-        phone: farmer.phone,
-        name: farmer.name,
-        village: farmer.village,
-      }
-    });
-
-  } catch (error) {
-    console.error('[VERIFY ERROR]:', error.message);
-    return res.status(500).json({ success: false, error: 'Verification failed. Please try again.' });
-  }
-});
+app.post('/api/auth/send-otp', otpAuth.sendOtp);
+app.post('/api/auth/verify-otp', otpAuth.verifyOtp);
+app.post('/api/auth/resend-otp', otpAuth.resendOtp);
+app.post('/api/auth/register', otpAuth.register);
+app.get('/api/auth/me', otpAuth.me);
+app.post('/api/auth/alert-email', otpAuth.updateAlertEmail);
+app.post('/api/send-otp', otpAuth.sendOtp);
+app.post('/api/verify-otp', otpAuth.verifyOtp);
 
 // ━━━━━━━━━━━━━━━ AI CHATBOT ━━━━━━━━━━━━━━━
 
 // Multilingual offline responses for all 9 supported languages
 const offlineTranslations = {
   en: {
-    greeting: 'Namaste! 🙏 I am KrishiMitra, your farming assistant. Ask me about soil health, crop recommendations, water advice, or fertilizer tips!',
-    default_help: 'I can help you with: 🌱 Soil health analysis, 🌾 Crop recommendations, 💧 Irrigation advice, 🧪 Fertilizer tips. Try asking about any of these!',
-    soil_with_data: (ctx) => `Your latest soil quality is "${ctx.soil_quality}". Nitrogen: ${ctx.n}, Phosphorus: ${ctx.p}, Potassium: ${ctx.k}, pH: ${ctx.ph}. Go to the Insights page for detailed charts!`,
-    soil_no_data: 'Please run a soil analysis first so I can give you detailed advice. Let me take you to the analysis page!',
-    crop_with_data: (crops) => `Based on your latest analysis, the best crops for your soil are: ${crops.join(', ')}. These were recommended by our AI model with 96% accuracy!`,
+    greeting: "Namaste! 🙏 I'm SAATHI, BharatGrow's smart agricultural assistant. Ask me about your soil, crops, weather, market prices, or farm sensor data.",
+    default_help: 'I can help with your farm nodes, soil, crop recommendations, weather, Government mandi prices, and sensor alerts. Try asking: How is my farm? Which node needs attention? What should I grow?',
+    soil_with_data: (ctx) => `Your latest soil quality is "${ctx.soil_quality}". Nitrogen: ${ctx.n} mg/kg, Phosphorus: ${ctx.p} mg/kg, Potassium: ${ctx.k} mg/kg, pH: ${ctx.ph}.`,
+    soil_no_data: 'I do not have a soil analysis yet. Open Analyze to run one, or ask about your live farm nodes if telemetry is streaming.',
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run — not a guarantee.`,
     crop_no_data: 'Run a soil analysis to get personalized crop recommendations for your field!',
     water: 'Water your fields during early morning (5-7 AM) to reduce evaporation losses. For most crops, maintain a 2-3 day irrigation cycle based on soil moisture levels. Drip irrigation saves up to 60% water!',
     fertilizer: 'Fertilizer tips: Apply Urea for nitrogen deficiency, DAP for phosphorus, and MOP for potassium. Always do a soil test before applying fertilizers. Excess fertilizer can damage crops!',
@@ -361,11 +280,11 @@ const offlineTranslations = {
     sms_page: 'Let me take you to the communication page to send SMS alerts!',
   },
   hi: {
-    greeting: 'नमस्ते! 🙏 मैं कृषिमित्र हूँ, आपका खेती सहायक। मिट्टी की सेहत, फसल सुझाव, पानी की सलाह या खाद के बारे में पूछें!',
-    default_help: 'मैं इनमें मदद कर सकता हूँ: 🌱 मिट्टी की जाँच, 🌾 फसल सुझाव, 💧 सिंचाई सलाह, 🧪 खाद के टिप्स। इनमें से कुछ भी पूछें!',
-    soil_with_data: (ctx) => `आपकी मिट्टी की गुणवत्ता "${ctx.soil_quality}" है। नाइट्रोजन: ${ctx.n}, फॉस्फोरस: ${ctx.p}, पोटैशियम: ${ctx.k}, pH: ${ctx.ph}। विस्तृत चार्ट के लिए इनसाइट्स पेज देखें!`,
-    soil_no_data: 'कृपया पहले मिट्टी की जाँच करें ताकि मैं आपको सही सलाह दे सकूँ। चलिए विश्लेषण पेज पर चलते हैं!',
-    crop_with_data: (crops) => `आपकी मिट्टी के लिए सबसे अच्छी फसलें हैं: ${crops.join(', ')}। ये हमारे AI मॉडल द्वारा 96% सटीकता से सुझाई गई हैं!`,
+    greeting: 'नमस्ते! 🙏 मैं साथी हूँ, BharatGrow का स्मार्ट कृषि सहायक। मिट्टी, फसल, मौसम, मंडी भाव या फार्म सेंसर डेटा के बारे में पूछें।',
+    default_help: 'मैं आपके खेत के नोड, मिट्टी, फसल सुझाव, मौसम, सरकारी मंडी भाव और सेंसर चेतावनियों में मदद कर सकता हूँ। पूछें: मेरा खेत कैसा है? किस नोड पर ध्यान चाहिए?',
+    soil_with_data: (ctx) => `आपकी मिट्टी की गुणवत्ता "${ctx.soil_quality}" है। नाइट्रोजन: ${ctx.n} mg/kg, फॉस्फोरस: ${ctx.p} mg/kg, पोटैशियम: ${ctx.k} mg/kg, pH: ${ctx.ph}।`,
+    soil_no_data: 'अभी मिट्टी विश्लेषण उपलब्ध नहीं है। Analyze खोलें, या यदि नोड रीडिंग चल रही हैं तो उनके बारे में पूछें।',
+    crop_with_data: (crops) => `फसल मॉडल अभी सुझाता है: ${crops.join(', ')}। यह आपके पिछले Analyze रन का ML अनुमान है — गारंटी नहीं।`,
     crop_no_data: 'अपने खेत के लिए फसल सुझाव पाने के लिए मिट्टी की जाँच करें!',
     water: 'सुबह जल्दी (5-7 बजे) सिंचाई करें ताकि वाष्पीकरण कम हो। ज़्यादातर फसलों के लिए 2-3 दिन का सिंचाई चक्र रखें। ड्रिप सिंचाई से 60% पानी बचता है!',
     fertilizer: 'खाद सुझाव: नाइट्रोजन की कमी के लिए यूरिया, फॉस्फोरस के लिए DAP, और पोटैशियम के लिए MOP डालें। खाद डालने से पहले हमेशा मिट्टी जाँच करें!',
@@ -376,11 +295,11 @@ const offlineTranslations = {
     sms_page: 'SMS भेजने के लिए संचार पेज पर चलते हैं!',
   },
   mr: {
-    greeting: 'नमस्कार! 🙏 मी कृषिमित्र आहे, तुमचा शेती सहाय्यक. मातीचे आरोग्य, पीक सुचवणी, पाण्याचा सल्ला किंवा खतांबद्दल विचारा!',
-    default_help: 'मी यामध्ये मदत करू शकतो: 🌱 मातीची तपासणी, 🌾 पीक सुचवणी, 💧 सिंचन सल्ला, 🧪 खत टिप्स. यापैकी काहीही विचारा!',
-    soil_with_data: (ctx) => `तुमच्या मातीची गुणवत्ता "${ctx.soil_quality}" आहे. नायट्रोजन: ${ctx.n}, फॉस्फरस: ${ctx.p}, पोटॅशियम: ${ctx.k}, pH: ${ctx.ph}. तपशीलवार चार्टसाठी इनसाइट्स पेज पहा!`,
-    soil_no_data: 'कृपया आधी मातीची तपासणी करा म्हणजे मी तुम्हाला योग्य सल्ला देऊ शकेन. चला विश्लेषण पेजवर जाऊ!',
-    crop_with_data: (crops) => `तुमच्या मातीसाठी सर्वोत्तम पिके: ${crops.join(', ')}. आमच्या AI मॉडेलने 96% अचूकतेने सुचवलेली आहेत!`,
+    greeting: 'नमस्कार! 🙏 मी साथी आहे, BharatGrow चा स्मार्ट कृषी सहाय्यक. माती, पिके, हवामान, मंडी भाव किंवा शेत सेन्सर डेटा विचारा.',
+    default_help: 'मी तुमच्या शेतातील नोड, माती, पीक सुचवणी, हवामान, शासकीय मंडी भाव आणि सेन्सर इशारे समजावून सांगू शकतो. विचारा: माझे शेत कसे आहे?',
+    soil_with_data: (ctx) => `तुमच्या मातीची गुणवत्ता "${ctx.soil_quality}" आहे. नायट्रोजन: ${ctx.n} mg/kg, फॉस्फरस: ${ctx.p} mg/kg, पोटॅशियम: ${ctx.k} mg/kg, pH: ${ctx.ph}.`,
+    soil_no_data: 'अद्याप माती विश्लेषण नाही. Analyze उघडा, किंवा नोड रीडिंग चालू असतील तर त्याबद्दल विचारा.',
+    crop_with_data: (crops) => `पीक मॉडेल सध्या सुचवते: ${crops.join(', ')}. हे तुमच्या शेवटच्या Analyze चा ML अंदाज आहे — हमी नाही.`,
     crop_no_data: 'पीक सुचवणी मिळवण्यासाठी मातीची तपासणी करा!',
     water: 'सकाळी लवकर (5-7 वाजता) सिंचन करा म्हणजे बाष्पीभवन कमी होईल. बहुतेक पिकांसाठी 2-3 दिवसांचे सिंचन चक्र ठेवा. ठिबक सिंचनाने 60% पाणी वाचते!',
     fertilizer: 'खत सल्ला: नायट्रोजनच्या कमतरतेसाठी युरिया, फॉस्फरससाठी DAP आणि पोटॅशियमसाठी MOP वापरा. खत टाकण्यापूर्वी नेहमी माती तपासा!',
@@ -391,11 +310,11 @@ const offlineTranslations = {
     sms_page: 'SMS पाठवण्यासाठी संवाद पेजवर जाऊ!',
   },
   ta: {
-    greeting: 'வணக்கம்! 🙏 நான் கிருஷிமித்ரா, உங்கள் வேளாண் உதவியாளர். மண் ஆரோக்கியம், பயிர் பரிந்துரை, நீர் ஆலோசனை அல்லது உரம் பற்றி கேளுங்கள்!',
+    greeting: 'வணக்கம்! 🙏 நான் SAATHI, BharatGrow-இன் வேளாண் உதவியாளர். மண், பயிர், வானிலை, மண்டி விலை அல்லது பண்ணை சென்சார் தரவைப் பற்றி கேளுங்கள்.',
     default_help: 'நான் உதவ முடியும்: 🌱 மண் பரிசோதனை, 🌾 பயிர் பரிந்துரை, 💧 நீர்ப்பாசன ஆலோசனை, 🧪 உர குறிப்புகள். இவற்றில் எதையும் கேளுங்கள்!',
     soil_with_data: (ctx) => `உங்கள் மண் தரம் "${ctx.soil_quality}". நைட்ரஜன்: ${ctx.n}, பாஸ்பரஸ்: ${ctx.p}, பொட்டாசியம்: ${ctx.k}, pH: ${ctx.ph}. விரிவான வரைபடங்களுக்கு இன்சைட்ஸ் பக்கம் பாருங்கள்!`,
     soil_no_data: 'முதலில் மண் பரிசோதனை செய்யுங்கள், பிறகு நான் சரியான ஆலோசனை தருவேன்!',
-    crop_with_data: (crops) => `உங்கள் மண்ணுக்கு சிறந்த பயிர்கள்: ${crops.join(', ')}. 96% துல்லியத்துடன் AI மூலம் பரிந்துரைக்கப்பட்டவை!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'பயிர் பரிந்துரை பெற மண் பரிசோதனை செய்யுங்கள்!',
     water: 'காலை (5-7 மணி) நீர்ப்பாசனம் செய்யுங்கள். 2-3 நாள் இடைவெளியில் நீர் பாய்ச்சுங்கள். சொட்டு நீர்ப்பாசனம் 60% நீர் சேமிக்கும்!',
     fertilizer: 'உர குறிப்புகள்: நைட்ரஜன் குறைபாட்டிற்கு யூரியா, பாஸ்பரஸுக்கு DAP, பொட்டாசியத்திற்கு MOP பயன்படுத்துங்கள். உரம் இடும் முன் மண் பரிசோதனை செய்யுங்கள்!',
@@ -406,11 +325,11 @@ const offlineTranslations = {
     sms_page: 'SMS அனுப்ப தகவல் தொடர்பு பக்கத்திற்கு செல்வோம்!',
   },
   te: {
-    greeting: 'నమస్కారం! 🙏 నేను కృషిమిత్ర, మీ వ్యవసాయ సహాయకుడు. నేల ఆరోగ్యం, పంట సిఫారసులు, నీటి సలహా లేదా ఎరువుల గురించి అడగండి!',
+    greeting: 'నమస్కారం! 🙏 నేను SAATHI, BharatGrow వ్యవసాయ సహాయకుడ్ని. నేల, పంటలు, వాతావరణం, మండీ ధరలు లేదా ఫార్మ్ సెన్సార్ డేటా గురించి అడగండి.',
     default_help: 'నేను సహాయం చేయగలను: 🌱 నేల పరీక్ష, 🌾 పంట సిఫారసులు, 💧 సాగునీటి సలహా, 🧪 ఎరువుల చిట్కాలు. వీటిలో ఏదైనా అడగండి!',
     soil_with_data: (ctx) => `మీ నేల నాణ్యత "${ctx.soil_quality}". నైట్రోజన్: ${ctx.n}, ఫాస్ఫరస్: ${ctx.p}, పొటాషియం: ${ctx.k}, pH: ${ctx.ph}. వివరమైన చార్ట్‌ల కోసం ఇన్‌సైట్స్ పేజీ చూడండి!`,
     soil_no_data: 'ముందుగా నేల పరీక్ష చేయండి, తర్వాత నేను సరైన సలహా ఇస్తాను!',
-    crop_with_data: (crops) => `మీ నేలకు ఉత్తమ పంటలు: ${crops.join(', ')}. 96% ఖచ్చితత్వంతో AI ద్వారా సిఫారసు చేయబడ్డాయి!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'పంట సిఫారసులు పొందడానికి నేల పరీక్ష చేయండి!',
     water: 'ఉదయం (5-7 గంటలు) నీటి తడి ఇవ్వండి. 2-3 రోజుల విరామంతో నీరు పెట్టండి. బిందు సేద్యం 60% నీటిని ఆదా చేస్తుంది!',
     fertilizer: 'ఎరువు చిట్కాలు: నైట్రోజన్ లోపానికి యూరియా, ఫాస్ఫరస్‌కు DAP, పొటాషియంకు MOP వాడండి. ఎరువులు వేయడానికి ముందు నేల పరీక్ష చేయండి!',
@@ -421,11 +340,11 @@ const offlineTranslations = {
     sms_page: 'SMS పంపడానికి కమ్యూనికేషన్ పేజీకి వెళ్దాం!',
   },
   bn: {
-    greeting: 'নমস্কার! 🙏 আমি কৃষিমিত্র, আপনার কৃষি সহায়ক। মাটির স্বাস্থ্য, ফসল সুপারিশ, জল পরামর্শ বা সার সম্পর্কে জিজ্ঞাসা করুন!',
+    greeting: 'নমস্কার! 🙏 আমি SAATHI, BharatGrow-এর কৃষি সহায়ক। মাটি, ফসল, আবহাওয়া, মান্ডি দাম বা ফার্ম সেন্সর তথ্য নিয়ে জিজ্ঞাসা করুন।',
     default_help: 'আমি সাহায্য করতে পারি: 🌱 মাটি পরীক্ষা, 🌾 ফসল সুপারিশ, 💧 সেচ পরামর্শ, 🧪 সার টিপস। এর যেকোনো বিষয়ে জিজ্ঞাসা করুন!',
     soil_with_data: (ctx) => `আপনার মাটির মান "${ctx.soil_quality}"। নাইট্রোজেন: ${ctx.n}, ফসফরাস: ${ctx.p}, পটাশিয়াম: ${ctx.k}, pH: ${ctx.ph}। বিস্তারিত চার্টের জন্য ইনসাইটস পেজ দেখুন!`,
     soil_no_data: 'প্রথমে মাটি পরীক্ষা করুন, তারপর আমি সঠিক পরামর্শ দিতে পারব!',
-    crop_with_data: (crops) => `আপনার মাটির জন্য সেরা ফসল: ${crops.join(', ')}। 96% নির্ভুলতায় AI দ্বারা সুপারিশকৃত!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'ফসল সুপারিশ পেতে মাটি পরীক্ষা করুন!',
     water: 'সকালে (৫-৭টা) সেচ দিন। ২-৩ দিন অন্তর জল দিন। ড্রিপ সেচে ৬০% জল বাঁচে!',
     fertilizer: 'সার টিপস: নাইট্রোজেনের ঘাটতিতে ইউরিয়া, ফসফরাসে DAP, পটাশিয়ামে MOP ব্যবহার করুন। সার দেওয়ার আগে মাটি পরীক্ষা করুন!',
@@ -436,11 +355,11 @@ const offlineTranslations = {
     sms_page: 'SMS পাঠাতে যোগাযোগ পেজে যাওয়া যাক!',
   },
   gu: {
-    greeting: 'નમસ્તે! 🙏 હું કૃષિમિત્ર છું, તમારો ખેતી સહાયક. માટીનું સ્વાસ્થ્ય, પાક ભલામણ, પાણી સલાહ કે ખાતર વિશે પૂછો!',
+    greeting: 'નમસ્તે! 🙏 હું SAATHI છું, BharatGrowનો કૃષિ સહાયક. માટી, પાક, હવામાન, મંડી ભાવ અથવા ફાર્મ સેન્સર ડેટા વિશે પૂછો.',
     default_help: 'હું મદદ કરી શકું છું: 🌱 માટી પરીક્ષણ, 🌾 પાક ભલામણ, 💧 સિંચાઈ સલાહ, 🧪 ખાતર ટિપ્સ. આમાંથી કંઈપણ પૂછો!',
     soil_with_data: (ctx) => `તમારી માટીની ગુણવત્તા "${ctx.soil_quality}" છે. નાઈટ્રોજન: ${ctx.n}, ફોસ્ફરસ: ${ctx.p}, પોટેશિયમ: ${ctx.k}, pH: ${ctx.ph}. વિગતવાર ચાર્ટ માટે ઇનસાઇટ્સ પેજ જુઓ!`,
     soil_no_data: 'પહેલા માટી પરીક્ષણ કરો, પછી હું યોગ્ય સલાહ આપી શકીશ!',
-    crop_with_data: (crops) => `તમારી માટી માટે શ્રેષ્ઠ પાક: ${crops.join(', ')}. 96% ચોકસાઈ સાથે AI દ્વારા ભલામણ!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'પાક ભલામણ મેળવવા માટી પરીક્ષણ કરો!',
     water: 'સવારે (5-7 વાગે) સિંચાઈ કરો. 2-3 દિવસના અંતરે પાણી આપો. ટપક સિંચાઈથી 60% પાણી બચે છે!',
     fertilizer: 'ખાતર ટિપ્સ: નાઈટ્રોજનની ઉણપ માટે યુરિયા, ફોસ્ફરસ માટે DAP, પોટેશિયમ માટે MOP વાપરો. ખાતર નાખતા પહેલા માટી પરીક્ષણ કરો!',
@@ -451,11 +370,11 @@ const offlineTranslations = {
     sms_page: 'SMS મોકલવા કોમ્યુનિકેશન પેજ પર જઈએ!',
   },
   kn: {
-    greeting: 'ನಮಸ್ಕಾರ! 🙏 ನಾನು ಕೃಷಿಮಿತ್ರ, ನಿಮ್ಮ ಕೃಷಿ ಸಹಾಯಕ. ಮಣ್ಣಿನ ಆರೋಗ್ಯ, ಬೆಳೆ ಶಿಫಾರಸು, ನೀರಿನ ಸಲಹೆ ಅಥವಾ ಗೊಬ್ಬರದ ಬಗ್ಗೆ ಕೇಳಿ!',
+    greeting: 'ನಮಸ್ಕಾರ! 🙏 ನಾನು SAATHI, BharatGrowನ ಕೃಷಿ ಸಹಾಯಕ. ಮಣ್ಣು, ಬೆಳೆ, ಹವಾಮಾನ, ಮಂಡಿ ಬೆಲೆ ಅಥವಾ ಫಾರ್ಮ್ ಸೆನ್ಸಾರ್ ಡೇಟಾ ಬಗ್ಗೆ ಕೇಳಿ.',
     default_help: 'ನಾನು ಸಹಾಯ ಮಾಡಬಲ್ಲೆ: 🌱 ಮಣ್ಣಿನ ಪರೀಕ್ಷೆ, 🌾 ಬೆಳೆ ಶಿಫಾರಸು, 💧 ನೀರಾವರಿ ಸಲಹೆ, 🧪 ಗೊಬ್ಬರ ಸಲಹೆ. ಇವುಗಳಲ್ಲಿ ಯಾವುದಾದರೂ ಕೇಳಿ!',
     soil_with_data: (ctx) => `ನಿಮ್ಮ ಮಣ್ಣಿನ ಗುಣಮಟ್ಟ "${ctx.soil_quality}". ನೈಟ್ರೋಜನ್: ${ctx.n}, ಫಾಸ್ಫರಸ್: ${ctx.p}, ಪೊಟ್ಯಾಸಿಯಮ್: ${ctx.k}, pH: ${ctx.ph}. ವಿವರವಾದ ಚಾರ್ಟ್‌ಗಳಿಗೆ ಇನ್‌ಸೈಟ್ಸ್ ಪುಟ ನೋಡಿ!`,
     soil_no_data: 'ಮೊದಲು ಮಣ್ಣಿನ ಪರೀಕ್ಷೆ ಮಾಡಿ, ನಂತರ ಸರಿಯಾದ ಸಲಹೆ ನೀಡುತ್ತೇನೆ!',
-    crop_with_data: (crops) => `ನಿಮ್ಮ ಮಣ್ಣಿಗೆ ಉತ್ತಮ ಬೆಳೆಗಳು: ${crops.join(', ')}. 96% ನಿಖರತೆಯೊಂದಿಗೆ AI ಶಿಫಾರಸು!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'ಬೆಳೆ ಶಿಫಾರಸು ಪಡೆಯಲು ಮಣ್ಣಿನ ಪರೀಕ್ಷೆ ಮಾಡಿ!',
     water: 'ಬೆಳಿಗ್ಗೆ (5-7 ಗಂಟೆ) ನೀರಾವರಿ ಮಾಡಿ. 2-3 ದಿನಗಳ ಮಧ್ಯಂತರದಲ್ಲಿ ನೀರು ಹಾಕಿ. ಹನಿ ನೀರಾವರಿ 60% ನೀರು ಉಳಿಸುತ್ತದೆ!',
     fertilizer: 'ಗೊಬ್ಬರ ಸಲಹೆ: ನೈಟ್ರೋಜನ್ ಕೊರತೆಗೆ ಯೂರಿಯಾ, ಫಾಸ್ಫರಸ್‌ಗೆ DAP, ಪೊಟ್ಯಾಸಿಯಮ್‌ಗೆ MOP ಬಳಸಿ. ಗೊಬ್ಬರ ಹಾಕುವ ಮೊದಲು ಮಣ್ಣು ಪರೀಕ್ಷಿಸಿ!',
@@ -466,11 +385,11 @@ const offlineTranslations = {
     sms_page: 'SMS ಕಳುಹಿಸಲು ಸಂವಹನ ಪುಟಕ್ಕೆ ಹೋಗೋಣ!',
   },
   pa: {
-    greeting: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! 🙏 ਮੈਂ ਕ੍ਰਿਸ਼ੀਮਿੱਤਰ ਹਾਂ, ਤੁਹਾਡਾ ਖੇਤੀ ਸਹਾਇਕ। ਮਿੱਟੀ ਦੀ ਸਿਹਤ, ਫ਼ਸਲ ਸੁਝਾਅ, ਪਾਣੀ ਦੀ ਸਲਾਹ ਜਾਂ ਖਾਦ ਬਾਰੇ ਪੁੱਛੋ!',
+    greeting: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! 🙏 ਮੈਂ SAATHI ਹਾਂ, BharatGrow ਦਾ ਖੇਤੀ ਸਹਾਇਕ। ਮਿੱਟੀ, ਫ਼ਸਲ, ਮੌਸਮ, ਮੰਡੀ ਭਾਅ ਜਾਂ ਫਾਰਮ ਸੈਂਸਰ ਡਾਟਾ ਬਾਰੇ ਪੁੱਛੋ।',
     default_help: 'ਮੈਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ: 🌱 ਮਿੱਟੀ ਜਾਂਚ, 🌾 ਫ਼ਸਲ ਸੁਝਾਅ, 💧 ਸਿੰਚਾਈ ਸਲਾਹ, 🧪 ਖਾਦ ਟਿੱਪਸ। ਇਨ੍ਹਾਂ ਵਿੱਚੋਂ ਕੁਝ ਵੀ ਪੁੱਛੋ!',
     soil_with_data: (ctx) => `ਤੁਹਾਡੀ ਮਿੱਟੀ ਦੀ ਗੁਣਵੱਤਾ "${ctx.soil_quality}" ਹੈ। ਨਾਈਟ੍ਰੋਜਨ: ${ctx.n}, ਫ਼ਾਸਫ਼ੋਰਸ: ${ctx.p}, ਪੋਟਾਸ਼ੀਅਮ: ${ctx.k}, pH: ${ctx.ph}। ਵਿਸਤਾਰ ਨਾਲ ਚਾਰਟ ਲਈ ਇਨਸਾਈਟਸ ਪੇਜ ਵੇਖੋ!`,
     soil_no_data: 'ਪਹਿਲਾਂ ਮਿੱਟੀ ਦੀ ਜਾਂਚ ਕਰੋ, ਫਿਰ ਮੈਂ ਤੁਹਾਨੂੰ ਸਹੀ ਸਲਾਹ ਦੇ ਸਕਾਂਗਾ!',
-    crop_with_data: (crops) => `ਤੁਹਾਡੀ ਮਿੱਟੀ ਲਈ ਸਭ ਤੋਂ ਵਧੀਆ ਫ਼ਸਲਾਂ: ${crops.join(', ')}। 96% ਸ਼ੁੱਧਤਾ ਨਾਲ AI ਵੱਲੋਂ ਸੁਝਾਈਆਂ!`,
+    crop_with_data: (crops) => `The crop model currently recommends: ${crops.join(', ')}. This is an ML prediction from your latest Analyze run.`,
     crop_no_data: 'ਫ਼ਸਲ ਸੁਝਾਅ ਲੈਣ ਲਈ ਮਿੱਟੀ ਦੀ ਜਾਂਚ ਕਰੋ!',
     water: 'ਸਵੇਰੇ (5-7 ਵਜੇ) ਸਿੰਚਾਈ ਕਰੋ। 2-3 ਦਿਨਾਂ ਦੇ ਅੰਤਰ ਤੇ ਪਾਣੀ ਦਿਓ। ਤੁਪਕਾ ਸਿੰਚਾਈ ਨਾਲ 60% ਪਾਣੀ ਬਚਦਾ ਹੈ!',
     fertilizer: 'ਖਾਦ ਟਿੱਪਸ: ਨਾਈਟ੍ਰੋਜਨ ਦੀ ਘਾਟ ਲਈ ਯੂਰੀਆ, ਫ਼ਾਸਫ਼ੋਰਸ ਲਈ DAP, ਪੋਟਾਸ਼ੀਅਮ ਲਈ MOP ਵਰਤੋ। ਖਾਦ ਪਾਉਣ ਤੋਂ ਪਹਿਲਾਂ ਮਿੱਟੀ ਜਾਂਚ ਕਰੋ!',
@@ -482,37 +401,206 @@ const offlineTranslations = {
   },
 };
 
+function analysisFromContext(context) {
+  if (context?.latestAnalysis) return context.latestAnalysis;
+  if (!context) return null;
+  if (context.soil_quality || context.n != null || context.recommended_crops) {
+    return {
+      soilQuality: context.soil_quality,
+      nitrogen: context.n,
+      phosphorus: context.p,
+      potassium: context.k,
+      ph: context.ph,
+      recommendedCrops: Array.isArray(context.recommended_crops)
+        ? context.recommended_crops
+        : parseMaybeCrops(context.recommended_crops),
+    };
+  }
+  return null;
+}
+
+function parseMaybeCrops(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function nodeFromContext(context, message) {
+  const nodes = context?.nodes || [];
+  const match = String(message || '').match(/node\s*0*(\d+)/i)
+    || String(message || '').match(/नोड\s*0*(\d+)/)
+    || String(message || '').match(/नोड\s*(\d+)/);
+  if (match) {
+    const num = Number(match[1]);
+    return nodes.find((node) => Number(node.nodeNumber) === num) || context?.selectedNode || null;
+  }
+  return context?.selectedNode || null;
+}
+
+function formatCritical(context) {
+  const items = context?.criticalSensors || [];
+  if (!items.length) return null;
+  return items.slice(0, 6).map((item) => {
+    const unit = item.unit ? ` ${item.unit}` : '';
+    return `Node ${String(item.nodeNumber).padStart(2, '0')} ${item.label || item.key} ${item.value}${unit} (${item.status || 'CRITICAL'})`;
+  }).join('; ');
+}
+
+function saathiSystemPrompt(langCode, farmContext) {
+  return `You are SAATHI — Smart Agricultural Assistance & Technology Helper Interface — inside BharatGrow (also written Bharat Grows).
+You are not ChatGPT, not KrishiMitra, and not a generic assistant. Never introduce yourself as KrishiMitra.
+
+You are the natural-language CONTROL LAYER for the BharatGrow website. The web app itself will perform navigation and UI actions. You must classify the farmer's request and never answer from the wrong data source.
+
+Pages you know:
+- Dashboard: farm summary, node overview, alerts
+- Analyze: sensor selection, analysis, Crop AI, rainfall intelligence
+- Map (/app/iot): hardware nodes, node health, anomalies — NOT the India GIS map
+- GIS (/app/gis): India agricultural map, states, districts, soil type layer, crop suitability, satellite basemap
+- History: persisted telemetry, node history, time ranges
+- Market: crop, state, district, AGMARKNET mandi prices
+- Results: last Crop AI + rainfall intelligence output
+
+Context priority — NEVER mix these:
+- GIS / "soil type of Maharashtra" / crop suitability of a STATE → GIS dataset only. NEVER quote latestAnalysis nitrogen, phosphorus, potassium, pH, or soilQuality.
+- "my soil", "soil N", node sensors → telemetry / Analyze
+- wheat/onion price, mandi → Government market data
+- "what crop should I grow" without a state → Crop AI (Analyze → Results)
+- rain / weather → rainfall intelligence (Open-Meteo + IMD), not GIS
+- history / last 7 days → History telemetry
+- "open GIS" / "show Maharashtra" → actions, not a speech-only reply
+
+Personality: helpful, farmer-friendly, clear, practical, concise, respectful. Use simple language.
+When you quote a reading, include the value and unit. Do not invent numbers.
+
+Data honesty:
+- Sensor / node readings are SIMULATED software-demo telemetry unless the context says otherwise.
+- Crop recommendations are ML predictions from the existing crop model.
+- Rainfall intelligence is rule-based Open-Meteo + IMD baseline — NOT a trained rainfall model.
+- Market prices are Government OGD / AGMARKNET. If unavailable, say so. Never guess a price.
+- GIS soil is ICAR–NBSS&LUP dominant soil at STATE level, not farm-level and not the Analyze NPK snapshot.
+
+Respond in language code: ${langCode || 'en'}.
+
+If the farmer clearly wants a website action, set actions to the named tools (openGIS, selectGISState, activateGISLayer, openMap, selectNode, openAnalyze, runAnalysis, openHistory, selectHistoryNode, selectHistoryRange, openMarket, showMarketPrice, openDashboard, openProfile, openBeta). Include a state name for GIS selectGISState. Include nodeNumber for node tools. Include commodity + state for market.
+
+Legacy action string still allowed: navigate_analyze, navigate_results, navigate_history, navigate_iot, navigate_market, navigate_gis, fill_phone:<NUMBER>, send_sms:<NUMBER>, none.
+
+Reply with JSON only:
+{"response":"<reply>","intent":"<INTENT>","action":"<legacy or none>","actions":[{"type":"<tool>","name":"...","nodeNumber":null,"commodity":null,"state":null,"layer":null}]}
+
+Current UI (lightweight, no secrets):
+${JSON.stringify(farmContext?.ui || farmContext?.clientContext?.ui || {}, null, 2)}
+
+Current BharatGrow farm context (compact, no secrets). Use it ONLY for farm/sensor/Crop-AI/market questions — never for GIS state soil type:
+${JSON.stringify(farmContext || { available: false }, null, 2)}`;
+}
+
 // Offline fallback when Gemini quota is exhausted — now multilingual
 function getOfflineResponse(message, context, lang_code) {
   const msg = (message || '').toLowerCase();
-  const t = offlineTranslations[lang_code] || offlineTranslations['en'];
+  const t = offlineTranslations[lang_code] || offlineTranslations.en;
+  const analysis = analysisFromContext(context);
+  const node = nodeFromContext(context, message);
+  const critical = formatCritical(context);
   let response = '';
   let action = 'none';
 
-  if (msg.includes('soil') || msg.includes('mitti') || msg.includes('health') || msg.includes('माती') || msg.includes('मिट्टी') || msg.includes('மண்') || msg.includes('নেটি') || msg.includes('మట్టి') || msg.includes('માટી') || msg.includes('ಮಣ್ಣ') || msg.includes('ਮਿੱਟੀ') || msg.includes('মাটি')) {
-    if (context && context.soil_quality) {
-      response = t.soil_with_data(context);
-      action = 'navigate_insights';
+  const asksHardware = /sensor|esp32|hardware|real reading|physical/.test(msg)
+    || msg.includes('सेंसर') || msg.includes('हार्डवेयर');
+  const asksFarm = /how is my farm|farm doing|मेरा खेत|माझे शेत|farm status/.test(msg);
+  const asksNode = /node\s*\d+|नोड/.test(msg);
+  const asksCritical = /critical|anomaly|alert|गंभीर|क्रिटिकल/.test(msg);
+  const asksMarket = /market|mandi|price|भाव|मंडी|बाजार/.test(msg);
+  const asksWeather = /weather|temperature|मौसम|हवामान/.test(msg);
+  const asksGis = /\bgis\b|soil type|crop suitability|agricultural map|महाराष्ट्र|मध्य प्रदेश/.test(msg)
+    && !/my soil|soil n\b|nitrogen|node\s*\d+/.test(msg);
+
+  if (asksGis) {
+    response = 'That is a GIS map request, not your Analyze-page soil readings. Open GIS and search the state there. I will not quote farm NPK for a state soil-type question.';
+    action = 'navigate_gis';
+  } else if (asksHardware) {
+    response = 'The current BharatGrow demo is using simulated sensor telemetry. The system is designed so those readings can later be replaced by live ESP32 hardware data.';
+  } else if (asksCritical) {
+    response = critical
+      ? `These sensors are currently CRITICAL: ${critical}. Status comes from BharatGrow's existing sensor classification. Telemetry is simulated demo data.`
+      : 'No CRITICAL sensors are in the latest available snapshot.';
+  } else if (asksNode && node) {
+    const n = node.sensors?.nitrogen;
+    const bits = [`Node ${String(node.nodeNumber).padStart(2, '0')} is ${node.health || 'awaiting data'}.`];
+    if (n) bits.push(`Nitrogen is ${n.value} ${n.unit} (${n.status}).`);
+    if (node.criticalSensors?.length) {
+      bits.push(`Critical: ${node.criticalSensors.map((s) => `${s.label} ${s.value} ${s.unit || ''}`.trim()).join(', ')}.`);
+    }
+    bits.push('These are simulated demo telemetry readings, classified with the existing BharatGrow sensor bands.');
+    response = bits.join(' ');
+  } else if (asksFarm) {
+    const farm = context?.farm;
+    if (farm?.nodeCount) {
+      response = `Your farm currently has ${farm.nodeCount} nodes. Healthy: ${farm.tally?.GOOD || 0}, needs attention: ${(farm.tally?.AVERAGE || 0) + (farm.tally?.BAD || 0)}, critical: ${farm.tally?.CRITICAL || 0}. ${critical ? `Critical sensors: ${critical}.` : ''} Readings are simulated demo telemetry.`;
+    } else {
+      response = 'I do not have live node data yet. Sign in and open Map so SAATHI can read your farm snapshot, or run Analyze.';
+    }
+  } else if (asksMarket) {
+    const market = context?.marketSummary;
+    if (market?.available && market.crops?.length) {
+      const top = market.crops.slice(0, 3).map((row) => `${row.commodity} ${row.modalPrice} ${row.unit || '₹/quintal'} at ${row.market}`).join('; ');
+      response = `The latest available Government OGD/AGMARKNET data shows: ${top}.`;
+    } else {
+      response = 'Current Government mandi data is unavailable. I will not guess a price.';
+    }
+  } else if (asksWeather) {
+    const rain = context?.rainfallPrediction;
+    const wx = context?.weather;
+    if (rain && (rain.rainfallTodayMm != null || rain.rainfallMm != null)) {
+      const today = rain.rainfallTodayMm ?? rain.rainfallMm;
+      response = `Rainfall intelligence (Open-Meteo forecast + IMD baseline, not a trained rainfall model): today ${today} mm${rain.rainfallNext24hMm != null ? `, next 24h ${rain.rainfallNext24hMm} mm` : ''}${rain.rainfallNext3DaysMm != null ? `, next 3 days ${rain.rainfallNext3DaysMm} mm` : ''}. ${rain.type || ''}`.trim();
+    } else if (wx?.temperatureC != null) {
+      response = `The latest farm telemetry temperature is ${wx.temperatureC}°C (${wx.status || 'ungraded'}). This is simulated demo telemetry, not a live weather-station feed.`;
+    } else {
+      response = 'Rainfall prediction unavailable.';
+    }
+  } else if (msg.includes('soil') || msg.includes('mitti') || msg.includes('health') || msg.includes('माती') || msg.includes('मिट्टी') || msg.includes('மண்') || msg.includes('మట్టి') || msg.includes('માટી') || msg.includes('ಮಣ್ಣ') || msg.includes('ਮਿੱਟੀ') || msg.includes('মাটি')) {
+    if (analysis?.soilQuality) {
+      response = t.soil_with_data({
+        soil_quality: analysis.soilQuality,
+        n: analysis.nitrogen,
+        p: analysis.phosphorus,
+        k: analysis.potassium,
+        ph: analysis.ph,
+      });
+    } else if (critical) {
+      response = `I do not have a completed Analyze run. From live (simulated) nodes: ${critical}.`;
     } else {
       response = t.soil_no_data;
       action = 'navigate_analyze';
     }
-  } else if (msg.includes('crop') || msg.includes('fasal') || msg.includes('grow') || msg.includes('recommend') || msg.includes('पीक') || msg.includes('फसल') || msg.includes('பயிர்') || msg.includes('পাক') || msg.includes('పంట') || msg.includes('પાક') || msg.includes('ಬೆಳೆ') || msg.includes('ਫ਼ਸਲ') || msg.includes('ফসল')) {
-    if (context && context.recommended_crops) {
-      const crops = typeof context.recommended_crops === 'string' ? JSON.parse(context.recommended_crops) : context.recommended_crops;
+  } else if (msg.includes('crop') || msg.includes('fasal') || msg.includes('grow') || msg.includes('recommend') || msg.includes('पीक') || msg.includes('फसल') || msg.includes('பயிர்') || msg.includes('పంట') || msg.includes('પાક') || msg.includes('ಬೆಳೆ') || msg.includes('ਫ਼ਸਲ') || msg.includes('ফসল')) {
+    const crops = analysis?.recommendedCrops || context?.cropRecommendation?.crops || [];
+    if (crops.length) {
       response = t.crop_with_data(crops);
     } else {
       response = t.crop_no_data;
       action = 'navigate_analyze';
     }
   } else if (msg.includes('water') || msg.includes('irrigation') || msg.includes('pani') || msg.includes('sinchai') || msg.includes('पानी') || msg.includes('सिंचाई') || msg.includes('পানি') || msg.includes('நீர்') || msg.includes('నీరు') || msg.includes('પાણી') || msg.includes('ನೀರು') || msg.includes('ਪਾਣੀ') || msg.includes('সেচ') || msg.includes('सिंचन')) {
-    response = t.water;
+    const moisture = node?.sensors?.soil_moisture || context?.nodes?.[0]?.sensors?.soil_moisture;
+    if (moisture) {
+      response = `Your latest soil moisture reading is ${moisture.value}${moisture.unit ? ` ${moisture.unit}` : ''} (${moisture.status}). This is simulated demo telemetry. ${t.water}`;
+    } else {
+      response = t.water;
+    }
   } else if (msg.includes('fertilizer') || msg.includes('khad') || msg.includes('urea') || msg.includes('खाद') || msg.includes('खत') || msg.includes('உரம்') || msg.includes('ఎరువు') || msg.includes('ખાતર') || msg.includes('ಗೊಬ್ಬರ') || msg.includes('ਖਾਦ') || msg.includes('সার')) {
     response = t.fertilizer;
   } else if (msg.includes('history') || msg.includes('previous') || msg.includes('past') || msg.includes('इतिहास') || msg.includes('पूर्वीचा') || msg.includes('முந்தைய') || msg.includes('ইতিহাস') || msg.includes('చరిత్ర') || msg.includes('ઇતિહાસ') || msg.includes('ಇತಿಹಾಸ') || msg.includes('ਇਤਿਹਾਸ')) {
     response = t.history;
     action = 'navigate_history';
-  } else if (msg.includes('analyze') || msg.includes('test') || msg.includes('check') || msg.includes('विश्लेषण') || msg.includes('तपासणी') || msg.includes('பரிசோதனை') || msg.includes('পরীক্ষা') || msg.includes('పరీక్ష') || msg.includes('પરીક્ષણ') || msg.includes('ಪರೀಕ್ಷೆ') || msg.includes('ਜਾਂਚ')) {
+  } else if (msg.includes('analyze') || msg.includes('test') || msg.includes('विश्लेषण') || msg.includes('तपासणी') || msg.includes('பரிசோதனை') || msg.includes('পরীক্ষা') || msg.includes('పరీక్ష') || msg.includes('પરીક્ષણ') || msg.includes('ಪರೀಕ್ಷೆ') || msg.includes('ਜਾਂਚ')) {
     response = t.analyze;
     action = 'navigate_analyze';
   } else if (msg.includes('insight') || msg.includes('chart') || msg.includes('graph') || msg.includes('चार्ट') || msg.includes('ग्राफ') || msg.includes('வரைபடம்') || msg.includes('চার্ট') || msg.includes('చార్ట') || msg.includes('ચાર્ટ') || msg.includes('ಚಾರ್ಟ') || msg.includes('ਚਾਰਟ')) {
@@ -535,104 +623,56 @@ function getOfflineResponse(message, context, lang_code) {
 }
 
 app.post('/api/chat', async (req, res) => {
+  const { message, lang_code, context } = req.body || {};
+  let farmContext = null;
   try {
-    const { message, lang_code, context } = req.body;
+    const farmer = await saathiContext.farmerFromRequest(req);
+    farmContext = await saathiContext.buildFarmContext(farmer, {
+      message: message || '',
+      clientContext: context,
+    });
+  } catch (err) {
+    console.error('[SAATHI context]', err.message);
+  }
+
+  try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      const fallback = getOfflineResponse(message, context, lang_code);
+      const fallback = getOfflineResponse(message, farmContext || context, lang_code);
       return res.json({ success: true, data: fallback });
     }
 
     const ai = new GoogleGenAI({ apiKey });
-
-    const contextString = context 
-      ? `Farmer's latest soil reading:
-         Nitrogen: ${context.n}, Phosphorus: ${context.p}, Potassium: ${context.k}, pH: ${context.ph}
-         Soil Quality: ${context.soil_quality}
-         Recommended Crops: ${context.recommended_crops}
-         Improvement Tips: ${context.improvement_tips}`
-      : `No recent soil readings available.`;
-
-    const systemPrompt = `You are KrishiMitra AI, a friendly, patient, and intelligent farming assistant designed for Indian farmers.
-You speak in simple, clear language and always respond in the language code requested: ${lang_code || 'en'}.
-You help farmers with: Soil health, Water recommendations, Crop suggestions, Fertilizer usage, Weather-related advice.
-Avoid technical jargon. Keep answers short and practical. Give actionable advice. 
-If unsure, guide the farmer step-by-step.
-Your goal is to make farming easier, smarter, and stress-free.
-
-You also have the ability to navigate the farmer throughout the web application if they ask to see specific pages or modules.
-Available actions:
-- "navigate_analyze": use when they want to analyze their soil or run a new test
-- "navigate_results": use when they want to see their AI results
-- "navigate_history": use when they want to see their past history or previous readings
-- "navigate_insights": use when they want to see insights or charts
-- "fill_phone:<NUMBER>": use when the user asks you to enter or type their mobile number. Extract the 10-digit number and append it. Example: "fill_phone:9920602745". Note: You are explicitly ALLOWED to handle and extract mobile numbers.
-- "send_sms:<NUMBER>": use when the user asks to send an SMS, send soil report, send analysis, or send results to a phone number. Extract the 10-digit number. This will navigate to the SMS page, fill their number, and auto-attach the latest soil analysis in the message body. Example: "send_sms:9920602745".
-- "none": use for all other queries, questions, or conversations where navigation or filling is not explicitly requested.
-
-You MUST respond with a valid JSON document containing exactly two keys: "response" (your conversational reply in the correct language) and "action" (one of the action enum strings above).
-
-Here is the farmer's current context:
-${contextString}`;
-
+    const systemPrompt = saathiSystemPrompt(lang_code, farmContext);
     const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [
-            { role: 'user', parts: [{ text: message }] }
-        ],
-        config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: "application/json",
-        }
+      model: 'gemini-2.0-flash',
+      contents: [
+        { role: 'user', parts: [{ text: message }] },
+      ],
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: 'application/json',
+      },
     });
 
-    const outputText = response.text;
-    const parsed = JSON.parse(outputText);
-    
-    res.json({
-      success: true,
-      data: parsed
-    });
-
+    const parsed = JSON.parse(response.text);
+    return res.json({ success: true, data: parsed });
   } catch (error) {
     console.error('[CHAT API ERROR]:', error.message || error);
-    // Graceful fallback — chatbot still works in offline mode with multilingual support
-    const { message, lang_code, context } = req.body;
-    const fallback = getOfflineResponse(message || '', context, lang_code);
-    res.json({ success: true, data: fallback });
+    const fallback = getOfflineResponse(message || '', farmContext || context, lang_code);
+    return res.json({ success: true, data: fallback });
   }
 });
 
 // ━━━━━━━━━━━━━━━ HACKATHON ADVISORY PLATFORM ENDPOINTS ━━━━━━━━━━━━━━━
 
-// GET /api/iot/telemetry — Real-time IoT sensor node telemetry feed
+// GET /api/iot/telemetry — formerly invented live values. Hardware Beta is the
+// ESP32 path; the main app reads persisted simulated readings from PostgreSQL.
 app.get('/api/iot/telemetry', (req, res) => {
-  const timestamp = new Date().toISOString();
-  // Simulate live subtle fluctuations for sensor readings
-  const variance = (min, max) => Number((Math.random() * (max - min) + min).toFixed(1));
-
-  const sensors = [
-    { id: 'NODE-01', location: 'North Field Parcel A', type: 'Soil Moisture Probe', value: variance(42, 48), unit: '%', status: 'Optimal', battery: 94 },
-    { id: 'NODE-02', location: 'North Field Parcel A', type: 'Ambient Temperature', value: variance(27, 31), unit: '°C', status: 'Optimal', battery: 89 },
-    { id: 'NODE-03', location: 'East Orchard Parcel B', type: 'Soil pH Sensor', value: variance(6.4, 6.8), unit: 'pH', status: 'Optimal', battery: 98 },
-    { id: 'NODE-04', location: 'South Field Parcel C', type: 'NPK Optical Probe', n: variance(70, 85), p: variance(35, 45), k: variance(140, 160), unit: 'mg/kg', status: 'Optimal', battery: 82 },
-    { id: 'NODE-05', location: 'West Field Parcel D', type: 'Solar Radiation Sensor', value: variance(650, 780), unit: 'W/m²', status: 'High Sunlight', battery: 100 },
-    { id: 'NODE-06', location: 'Central Field Probe', type: 'Canopy Humidity', value: variance(58, 64), unit: '%', status: 'Optimal', battery: 91 }
-  ];
-
-  const alerts = [
-    { id: 'ALT-101', severity: 'warning', message: 'Parcel D soil moisture dropping below 35%. Scheduled irrigation suggested.', timestamp: '10 mins ago' },
-    { id: 'ALT-102', severity: 'info', message: 'Node-04 NPK optical calibration synced successfully.', timestamp: '1 hour ago' },
-    { id: 'ALT-103', severity: 'success', message: 'All 6 IoT field sensor nodes operating at 100% telemetry uptime.', timestamp: 'Active' }
-  ];
-
-  res.json({
-    success: true,
-    timestamp,
-    system_status: 'Online',
-    active_nodes: 6,
-    sensors,
-    alerts
+  res.status(410).json({
+    success: false,
+    code: 'TELEMETRY_MOVED',
+    error: 'Use GET /api/nodes and GET /api/telemetry/latest. Readings are generated by the backend simulator and stored in PostgreSQL.',
   });
 });
 
@@ -781,70 +821,160 @@ app.post('/api/fertilizer/optimize', (req, res) => {
   });
 });
 
-// GET /api/market/forecast — Mandi price trends & 30-day AI price prediction curves
-app.get('/api/market/forecast', (req, res) => {
-  const crops = [
-    {
-      crop: 'Wheat (Sharbati)',
-      current_price_rs_quintal: 2450,
-      predicted_price_30d: 2680,
-      trend: 'UP (+9.3%)',
-      recommendation: 'HOLD — Expected price peak in 3 weeks',
-      top_mandi: 'Indore Mandi, MP',
-      historical_30d: [2300, 2320, 2350, 2380, 2400, 2420, 2450],
-      forecast_30d: [2480, 2520, 2580, 2630, 2680]
-    },
-    {
-      crop: 'Paddy / Rice (Basmati)',
-      current_price_rs_quintal: 3850,
-      predicted_price_30d: 3720,
-      trend: 'DOWN (-3.3%)',
-      recommendation: 'SELL NOW — Mandi arrival surge expected next week',
-      top_mandi: 'Karnal Mandi, HR',
-      historical_30d: [3950, 3920, 3900, 3880, 3860, 3850, 3850],
-      forecast_30d: [3830, 3800, 3760, 3740, 3720]
-    },
-    {
-      crop: 'Cotton (Medium Staple)',
-      current_price_rs_quintal: 7100,
-      predicted_price_30d: 7650,
-      trend: 'UP (+7.7%)',
-      recommendation: 'HOLD — High international export demand',
-      top_mandi: 'Rajkot APMC, GJ',
-      historical_30d: [6800, 6850, 6900, 6980, 7050, 7100, 7100],
-      forecast_30d: [7200, 7350, 7500, 7600, 7650]
-    },
-    {
-      crop: 'Tomato (Hybrid)',
-      current_price_rs_quintal: 1950,
-      predicted_price_30d: 2400,
-      trend: 'UP (+23.0%)',
-      recommendation: 'STRONG HOLD — Supply tightness in neighboring states',
-      top_mandi: 'Azadpur Mandi, Delhi',
-      historical_30d: [1400, 1550, 1700, 1820, 1900, 1950, 1950],
-      forecast_30d: [2050, 2180, 2280, 2350, 2400]
-    },
-    {
-      crop: 'Soybean (Yellow)',
-      current_price_rs_quintal: 4600,
-      predicted_price_30d: 4650,
-      trend: 'STABLE (+1.0%)',
-      recommendation: 'SELL PORTION — Low volatility expected',
-      top_mandi: 'Latur Mandi, MH',
-      historical_30d: [4500, 4520, 4550, 4580, 4600, 4600, 4600],
-      forecast_30d: [4610, 4620, 4630, 4640, 4650]
-    }
-  ];
-
-  res.json({
-    success: true,
-    last_updated: '2026-08-20T10:00:00Z',
-    source: 'Agmarknet & AI Mandi Forecast Engine',
-    crops
+function marketError(res, err) {
+  const status = err.appStatus || 502;
+  console.error('[MARKET]', err.code || 'ERROR');
+  return res.status(status).json({
+    success: false,
+    code: err.code || 'MARKET_UNAVAILABLE',
+    message: err.publicMessage || 'Unable to retrieve current mandi prices.',
   });
+}
+
+app.get('/api/market/prices', async (req, res) => {
+  try {
+    const data = await marketService.getPrices(req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
 });
 
-const PORT = process.env.PORT || 5000;
+app.get('/api/market/crop', async (req, res) => {
+  try {
+    const commodity = String(req.query.commodity || '').trim();
+    if (!commodity) {
+      return res.status(400).json({
+        success: false,
+        code: 'BAD_REQUEST',
+        message: 'Choose a crop to view its price trend.',
+      });
+    }
+    const data = await marketService.getCommodity(commodity, req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/crops/:commodity/history', async (req, res) => {
+  try {
+    const data = await marketService.getHistory(decodeURIComponent(req.params.commodity), req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/crops/:commodity', async (req, res) => {
+  try {
+    const data = await marketService.getCommodity(decodeURIComponent(req.params.commodity), req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/trends', async (req, res) => {
+  try {
+    const data = await marketService.getTrends(req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/markets', async (req, res) => {
+  try {
+    const data = await marketService.getMarkets(req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/mandis', async (req, res) => {
+  try {
+    const data = await marketService.getMarkets(req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/status', async (req, res) => {
+  try {
+    const data = await marketService.getStatus();
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/summary', async (req, res) => {
+  try {
+    const data = await marketService.getSummary(req.query);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+app.get('/api/market/forecast', async (req, res) => {
+  try {
+    const data = await marketService.getSummary(req.query);
+    res.json({
+      success: true,
+      source: data.source,
+      lastUpdated: data.lastUpdated,
+      crops: (data.commodities || []).map((row) => ({
+        crop: row.commodity,
+        top_mandi: row.market,
+        current_price_rs_quintal: row.modalPrice,
+        date: row.date,
+        change1d: row.change1d,
+        signal: row.signal,
+      })),
+    });
+  } catch (err) {
+    marketError(res, err);
+  }
+});
+
+const PORT = process.env.PORT || 5005;
 app.listen(PORT, () => {
   console.log(`Node.js Backend server running on port ${PORT}`);
+  console.log(`Fast2SMS configured: ${process.env.FAST2SMS_API_KEY ? 'yes' : 'no'}`);
+  console.log(`DATA_GOV_API_KEY loaded: ${Boolean(String(process.env.DATA_GOV_API_KEY || '').trim())}`);
+  setTimeout(() => {
+    marketService.ensureSnapshot({}).catch((err) => {
+      console.error('[MARKET SYNC]', err.code || err.message);
+    });
+  }, 1200);
+  const sixHours = 6 * 60 * 60 * 1000;
+  setInterval(() => {
+    marketService.syncDaily({}).catch((err) => {
+      console.error('[MARKET SYNC]', err.code || err.message);
+    });
+  }, sixHours);
+
+  simulationEngine.start().then((info) => {
+    if (info?.started) {
+      console.log(`[simulation] telemetry every ${info.intervalMs}ms`);
+    } else if (info?.reason) {
+      console.log(`[simulation] not started: ${info.reason}`);
+    }
+  }).catch((err) => {
+    console.error('[simulation]', err.message);
+  });
+
+  espIngest.start().then((info) => {
+    if (info?.started) {
+      console.log(`[esp] polling ${info.gateway} every ${info.intervalMs}ms`);
+    } else if (info?.reason) {
+      console.log(`[esp] not started: ${info.reason}`);
+    }
+  }).catch((err) => {
+    console.error('[esp]', err.message);
+  });
 });

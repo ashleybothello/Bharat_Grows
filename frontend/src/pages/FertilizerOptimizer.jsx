@@ -2,10 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { FlaskConical, Leaf, ShieldCheck, Zap, ArrowRight, Award, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
 
-const BACKEND_URL = 'http://localhost:5005';
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5005';
 
 export default function FertilizerOptimizer() {
+  const { t } = useLang();
   const [crop, setCrop] = useState('Wheat');
   const [acres, setAcres] = useState(2);
   const [targetYield, setTargetYield] = useState(25);
@@ -35,28 +38,9 @@ export default function FertilizerOptimizer() {
   }, [crop, acres, targetYield]);
 
   return (
-    <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+    <div className="farm-page">
       
-      {/* Title Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div style={{ background: '#FFF3E0', padding: '0.5rem', borderRadius: '0.6rem' }}>
-            <FlaskConical size={26} color="#EF6C00" />
-          </div>
-          <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>
-              Precision Fertilizer & Eco-Score Engine
-            </h1>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
-              Target yield dosing, bio-fertilizer organic substitutes & carbon footprint optimization
-            </p>
-          </div>
-        </div>
-
-        <div style={{ background: '#E8F5E9', color: '#2E7D32', padding: '0.4rem 0.8rem', borderRadius: '0.6rem', fontWeight: 700, fontSize: '0.82rem', border: '1px solid #C8E6C9' }}>
-          🌱 Carbon Credit Rating: A+
-        </div>
-      </div>
+      <PageHeader kicker={t.pg_more_fert} title={t.pg_more_fert} lede={t.pg_more_fert_d} />
 
       {/* Main Grid: Controls + Sustainability Scorecard */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>

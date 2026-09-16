@@ -1,4 +1,9 @@
-export const translations = {
+import { extras } from './i18n-dynamic';
+import { extraCopy } from './i18n-extra';
+import { LANG_CODES } from './i18n-catalog';
+import { publicCopy } from './i18n-public';
+
+const coreTranslations = {
   en: {
     // ── Navbar ──
     nav_dashboard: 'Dashboard',
@@ -11,7 +16,7 @@ export const translations = {
     nav_irrigation: 'AI Irrigation',
     nav_pest: 'Pest AI',
     nav_fertilizer: 'Fertilizer & Carbon',
-    nav_market: 'Market Forecast',
+    nav_market: 'Crop Market',
     nav_sms: 'SMS',
     nav_logout: 'Logout',
 
@@ -71,8 +76,8 @@ export const translations = {
     comm_offline_active: 'Offline Active',
 
     // ── Chatbot ──
-    greeting: "Hello! I am your farming assistant. Ask me anything.",
-    chat_placeholder: "Ask about soil, water, or crops...",
+    greeting: "Namaste! 🙏 I'm SAATHI, BharatGrow's smart agricultural assistant. Ask me about your soil, crops, weather, market prices, or farm sensor data.",
+    chat_placeholder: "Ask about soil, crops, weather, market, or sensors...",
     quick_soil: "Check soil health",
     quick_crop: "What crop should I grow?",
     quick_water: "Irrigation advice",
@@ -143,8 +148,8 @@ export const translations = {
     comm_offline_desc: 'चैट बंद है। SMS पैनल से किसानों तक पहुँचें।',
     comm_simulate_offline: 'ऑफ़लाइन अनुकरण',
     comm_offline_active: 'ऑफ़लाइन चालू',
-    greeting: "नमस्ते! मैं आपका कृषि सहायक हूँ।",
-    chat_placeholder: "मिट्टी, पानी या फसल के बारे में पूछें...",
+    greeting: "नमस्ते! 🙏 मैं साथी हूँ, BharatGrow का स्मार्ट कृषि सहायक। मिट्टी, फसल, मौसम, मंडी भाव या फार्म सेंसर डेटा के बारे में पूछें।",
+    chat_placeholder: "मिट्टी, फसल, मौसम, बाज़ार या सेंसर पूछें...",
     quick_soil: "मिट्टी की जाँच",
     quick_crop: "कौन सी फसल उगाएं?",
     quick_water: "सिंचाई की सलाह",
@@ -215,8 +220,8 @@ export const translations = {
     comm_offline_desc: 'चॅट बंद आहे. SMS पॅनेलवरून शेतकऱ्यांशी संपर्क करा.',
     comm_simulate_offline: 'ऑफलाइन अनुकरण',
     comm_offline_active: 'ऑफलाइन चालू',
-    greeting: "नमस्कार! मी तुमचा शेती सहाय्यक आहे.",
-    chat_placeholder: "माती, पाणी किंवा पिकाबद्दल विचारा...",
+    greeting: "नमस्कार! 🙏 मी साथी आहे, BharatGrow चा स्मार्ट कृषी सहाय्यक. माती, पिके, हवामान, मंडी भाव किंवा शेत सेन्सर डेटा विचारा.",
+    chat_placeholder: "माती, पिक, हवामान, बाजार किंवा सेन्सर विचारा...",
     quick_soil: "मातीचे आरोग्य",
     quick_crop: "कोणते पीक घ्यावे?",
     quick_water: "सिंचन सल्ला",
@@ -287,7 +292,7 @@ export const translations = {
     comm_offline_desc: 'சாட் முடக்கப்பட்டது. SMS பயன்படுத்தவும்.',
     comm_simulate_offline: 'ஆஃப்லைன் உருவகிப்பு',
     comm_offline_active: 'ஆஃப்லைன் செயலில்',
-    greeting: "வணக்கம்! நான் உங்கள் விவசாய உதவியாளர்.",
+    greeting: "வணக்கம்! 🙏 நான் SAATHI, BharatGrow-இன் வேளாண் உதவியாளர். மண், பயிர், வானிலை, மண்டி விலை அல்லது சென்சார் தரவைப் பற்றி கேளுங்கள்.",
     chat_placeholder: "மண், நீர் அல்லது பயிர் பற்றி கேளுங்கள்...",
     quick_soil: "மண் வளம்",
     quick_crop: "என்ன பயிர்?",
@@ -359,7 +364,7 @@ export const translations = {
     comm_offline_desc: 'చాట్ నిలిపివేయబడింది. SMS ప్యానెల్ వాడండి.',
     comm_simulate_offline: 'ఆఫ్‌లైన్ అనుకరణ',
     comm_offline_active: 'ఆఫ్‌లైన్ చేతన',
-    greeting: "నమస్కారం! నేను మీ వ్యవసాయ సహకారిని.",
+    greeting: "నమస్కారం! 🙏 నేను SAATHI, BharatGrow వ్యవసాయ సహాయకుడ్ని. నేల, పంటలు, వాతావరణం, మండీ ధరలు లేదా సెన్సార్ డేటా గురించి అడగండి.",
     chat_placeholder: "మట్టి, నీరు లేదా పంట గురించి అడగండి...",
     quick_soil: "మట్టి ఆరోగ్యం",
     quick_crop: "ఏ పంట?",
@@ -431,7 +436,7 @@ export const translations = {
     comm_offline_desc: 'চ্যাট বন্ধ। SMS প্যানেল ব্যবহার করুন।',
     comm_simulate_offline: 'অফলাইন সিমুলেশন',
     comm_offline_active: 'অফলাইন সক্রিয়',
-    greeting: "নমস্কার! আমি আপনার কৃষি সহায়ক।",
+    greeting: "নমস্কার! 🙏 আমি SAATHI, BharatGrow-এর কৃষি সহায়ক। মাটি, ফসল, আবহাওয়া, মান্ডি দাম বা সেন্সর তথ্য জিজ্ঞাসা করুন।",
     chat_placeholder: "মাটি, জল বা ফসল সম্পর্কে জিজ্ঞাসা করুন...",
     quick_soil: "মাটির স্বাস্থ্য",
     quick_crop: "কী ফসল?",
@@ -503,7 +508,7 @@ export const translations = {
     comm_offline_desc: 'ચેટ બંધ. SMS પેનલ વાપરો.',
     comm_simulate_offline: 'ઓફલાઇન અનુકરણ',
     comm_offline_active: 'ઓફલાઇન સક્રિય',
-    greeting: "નમસ્તે! હું તમારો કૃષિ સહાયક છું.",
+    greeting: "નમસ્તે! 🙏 હું SAATHI છું, BharatGrowનો કૃષિ સહાયક. માટી, પાક, હવામાન, મંડી ભાવ અથવા સેન્સર ડેટા વિશે પૂછો.",
     chat_placeholder: "જમીન, પાણી અથવા પાક વિશે પૂછો...",
     quick_soil: "જમીન આરોગ્ય",
     quick_crop: "કયો પાક?",
@@ -575,7 +580,7 @@ export const translations = {
     comm_offline_desc: 'ಚಾಟ್ ನಿಲ್ಲಿಸಲಾಗಿದೆ. SMS ಪ್ಯಾನೆಲ್ ಬಳಸಿ.',
     comm_simulate_offline: 'ಆಫ್‌ಲೈನ್ ಸಿಮುಲೇಷನ್',
     comm_offline_active: 'ಆಫ್‌ಲೈನ್ ಸ್ಥಿತಿ',
-    greeting: "ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಕೃಷಿ ಸಹಾಯಕ.",
+    greeting: "ನಮಸ್ಕಾರ! 🙏 ನಾನು SAATHI, BharatGrowನ ಕೃಷಿ ಸಹಾಯಕ. ಮಣ್ಣು, ಬೆಳೆ, ಹವಾಮಾನ, ಮಂಡಿ ಬೆಲೆ ಅಥವಾ ಸೆನ್ಸಾರ್ ಡೇಟಾ ಬಗ್ಗೆ ಕೇಳಿ.",
     chat_placeholder: "ಮಣ್ಣು, ನೀರು ಅಥವಾ ಬೆಳೆ ಬಗ್ಗೆ ಕೇಳಿ...",
     quick_soil: "ಮಣ್ಣಿನ ಆರೋಗ್ಯ",
     quick_crop: "ಯಾವ ಬೆಳೆ?",
@@ -647,7 +652,7 @@ export const translations = {
     comm_offline_desc: 'ਚੈਟ ਬੰਦ ਹੈ। SMS ਪੈਨਲ ਵਰਤੋ.',
     comm_simulate_offline: 'ਔਫ਼ਲਾਈਨ ਅਨੁਕਰਨ',
     comm_offline_active: 'ਔਫ਼ਲਾਈਨ ਚਾਲੂ',
-    greeting: "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਤੁਹਾਡਾ ਖੇਤੀ ਸਹਾਇਕ ਹਾਂ।",
+    greeting: "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! 🙏 ਮੈਂ SAATHI ਹਾਂ, BharatGrow ਦਾ ਖੇਤੀ ਸਹਾਇਕ। ਮਿੱਟੀ, ਫਸਲ, ਮੌਸਮ, ਮੰਡੀ ਭਾਅ ਜਾਂ ਸੈਂਸਰ ਡਾਟਾ ਬਾਰੇ ਪੁੱਛੋ।",
     chat_placeholder: "ਮਿੱਟੀ, ਪਾਣੀ ਜਾਂ ਫਸਲ ਬਾਰੇ ਪੁੱਛੋ...",
     quick_soil: "ਮਿੱਟੀ ਦੀ ਸਿਹਤ",
     quick_crop: "ਕਿਹੜੀ ਫਸਲ?",
@@ -667,3 +672,19 @@ export const translations = {
     fert_tpl: (tips) => `ਖਾਦ ਸਲਾਹ: ${tips}`,
   }
 };
+
+export const translations = Object.fromEntries(
+  LANG_CODES.map((code) => [
+    code,
+    {
+      ...(coreTranslations.en || {}),
+      ...(coreTranslations[code] || {}),
+      ...(publicCopy.en || {}),
+      ...(publicCopy[code] || {}),
+      ...(extras.en || {}),
+      ...(extras[code] || {}),
+      ...(extraCopy.en || {}),
+      ...(extraCopy[code] || {}),
+    },
+  ]),
+);

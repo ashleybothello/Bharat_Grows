@@ -105,7 +105,7 @@ const AIChatbot = () => {
       }
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { sender: 'bot', text: 'Connection to KrishiMitra AI failed.' }]);
+      setMessages(prev => [...prev, { sender: 'bot', text: 'Connection to SAATHI failed.' }]);
     } finally {
       setIsTyping(false);
     }
@@ -267,7 +267,7 @@ const AIChatbot = () => {
                   <Sparkles size={18} color="white" />
                 </div>
                 <div>
-                  <h3 style={{ color: 'white', fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>KrishiMitra AI</h3>
+                  <h3 style={{ color: 'white', fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>SAATHI</h3>
                   <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.7rem', margin: 0, fontWeight: 600 }}>● Active</p>
                 </div>
               </div>

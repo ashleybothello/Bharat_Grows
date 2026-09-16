@@ -4,6 +4,8 @@ import { Smartphone, Send, ShieldAlert, CheckCircle, WifiOff, Sprout, Globe, Zap
 import axios from 'axios';
 import { translations } from '../utils/i18n';
 import { useLang } from '../context/LanguageContext';
+import { API_URL } from '../utils/api';
+import PageHeader from '../components/PageHeader';
 
 const Communication = () => {
   const [offline, setOffline] = useState(false);
@@ -37,7 +39,7 @@ const Communication = () => {
   useEffect(() => {
     const fetchLatest = async () => {
       try {
-        const res = await axios.get('http://localhost:5005/history');
+        const res = await axios.get(`${API_URL}/history`);
         if (res.data && res.data.length > 0) setLastAnalysis(res.data[0]);
       } catch(err) {
         console.error('Failed to fetch history', err);
@@ -90,7 +92,7 @@ const Communication = () => {
         const quality = lastAnalysis.soil_quality || 'Unknown';
         const autoMsg = `SoilAI Alert:\nSoil Quality: ${quality}\nNitrogen: ${lastAnalysis.n}, Phosphorus: ${lastAnalysis.p}, Potassium: ${lastAnalysis.k}\npH: ${lastAnalysis.ph}\nRecommended Crops: ${crops}\nAction: ${tips}`;
         setSmsMessage(autoMsg);
-        showToast('✅ Phone & soil analysis auto-filled by KrishiMitra AI!', 'success');
+        showToast('Phone and soil analysis auto-filled by भारतGrows AI.', 'success');
       } else {
         showToast('No soil analysis available yet. Run one first!', 'error');
       }
@@ -139,7 +141,7 @@ const Communication = () => {
     }
     setSmsSending(true);
     try {
-      const res = await axios.post('http://localhost:5005/api/send-sms', { 
+      const res = await axios.post(`${API_URL}/api/send-sms`, { 
         phone, 
         message: smsMessage 
       });
@@ -165,7 +167,7 @@ const Communication = () => {
     setWaTyping(true);
 
     try {
-      const res = await axios.post('http://localhost:5005/api/chat', {
+      const res = await axios.post(`${API_URL}/api/chat`, {
         message: userMsg,
         lang_code: waLang,
         context: lastAnalysis
@@ -215,24 +217,28 @@ const Communication = () => {
   ];
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      
-      {/* Top Header */}
-      <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-        <h1 className="heading" style={{ fontSize: '2rem' }}>{t.comm_title}</h1>
-        <p className="subheading" style={{ maxWidth: '600px', margin: '0 auto' }}>{t.comm_subtitle}</p>
-        
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '1.5rem' }}>
-          <button onClick={() => setOffline(!offline)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', background: offline ? '#EF4444' : 'rgba(239, 68, 68, 0.1)', color: offline ? 'white' : '#EF4444', border: '1px solid #EF4444', borderRadius: '2rem', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+    <div className="farm-page">
+      <PageHeader
+        kicker={t.nav_sms}
+        title={t.comm_title}
+        lede={t.comm_subtitle}
+        tools={(
+          <button type="button" className="farm-ghost-btn" onClick={() => setOffline(!offline)}>
             <WifiOff size={16} /> {offline ? t.comm_offline_active : t.comm_simulate_offline}
           </button>
-        </div>
-      </div>
+        )}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '2rem' }}>
         
         {/* ━━━ REAL SMS PANEL ━━━ */}
-        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="glass" style={{ padding: '2rem', position: 'relative', overflow: 'hidden' }}>
+        <motion.div
+          initial={{ y: 12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+          className="glass"
+          style={{ padding: '2rem', position: 'relative', overflow: 'hidden' }}
+        >
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
             <div style={{ background: 'linear-gradient(135deg, #3B82F6, #2563EB)', padding: '0.6rem', borderRadius: '0.6rem', color: 'white' }}>
@@ -251,7 +257,7 @@ const Communication = () => {
               <input 
                 id="comm-phone-input"
                 type="tel" value={phone} onChange={e => setPhone(e.target.value)} 
-                placeholder="e.g. 9876543210" required 
+                placeholder={t.comm_phone_eg || t.phone_placeholder} required 
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '0.6rem', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)', outline: 'none', fontSize: '0.9rem', transition: 'all 0.3s' }} 
               />
             </div>
@@ -265,7 +271,7 @@ const Communication = () => {
               </div>
               <textarea 
                 value={smsMessage} onChange={e => setSmsMessage(e.target.value)}
-                placeholder="Type your message or click 'Use Last Analysis' to auto-fill from soil results..."
+                placeholder={t.comm_msg_ph}
                 rows={5}
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '0.6rem', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)', outline: 'none', fontSize: '0.85rem', resize: 'vertical', lineHeight: 1.5, fontFamily: 'inherit' }}
               />
@@ -446,7 +452,7 @@ const Communication = () => {
           </div>
         </motion.div>
       </div>
-    </motion.div>
+    </div>
   );
 };
 

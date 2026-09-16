@@ -1,193 +1,201 @@
+import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Sprout, Activity, History, LineChart, MessageCircle, LogOut, Globe } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
+import {
+  History, LayoutDashboard, FlaskConical, Ellipsis,
+  LogOut, TrendingUp, Menu, X, Sparkles, Cpu, UserRound, Map, Globe,
+} from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useLang } from '../context/LanguageContext';
-import '../index.css';
+import { useAuth } from '../context/AuthContext';
+import BrandMark from './BrandMark';
+import LanguageSelect from './LanguageSelect';
+import { openSaathi } from '../pages/dashboard/helpers';
 
-const langOptions = [
-  { code: 'en', label: 'English' },
-  { code: 'hi', label: 'हिंदी' },
-  { code: 'mr', label: 'मराठी' },
-  { code: 'bn', label: 'বাংলা' },
-  { code: 'te', label: 'తెలుగు' },
-  { code: 'ta', label: 'தமிழ்' },
-  { code: 'gu', label: 'ગુજરાતી' },
-  { code: 'kn', label: 'ಕನ್ನಡ' },
-  { code: 'pa', label: 'ਪੰਜਾਬੀ' },
-];
+function pathActive(pathname, path) {
+  if (path === '/app/market') return pathname.startsWith('/app/market');
+  if (path === '/app/iot') return pathname === '/app/iot' || pathname === '/app/map';
+  if (path === '/app/gis') return pathname === '/app/gis' || pathname === '/app/satellite';
+  return pathname === path;
+}
 
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { lang, setLang, t } = useLang();
+  const { t } = useLang();
+  const { farmer, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const links = [
-    { name: t.nav_dashboard || 'Dashboard', path: '/app/dashboard', emoji: '🏠' },
-    { name: t.nav_analyze || 'Analyze', path: '/app/analyze', emoji: '🔬' },
-    { name: t.nav_results || 'Results', path: '/app/results', emoji: '🌱' },
-    { name: t.nav_insights || 'Insights', path: '/app/insights', emoji: '📊' },
-    { name: t.nav_history || 'History', path: '/app/history', emoji: '📋' },
-    { name: t.nav_communication || 'Communication', path: '/app/communication', emoji: '💬' },
-    { name: 'More', path: '/app/more', emoji: '⚡' },
+    { name: t.nav_dashboard, path: '/app/dashboard', icon: LayoutDashboard },
+    { name: t.nav_analyze, path: '/app/analyze', icon: FlaskConical },
+    { name: t.nav_map, path: '/app/iot', icon: Map },
+    { name: t.nav_gis, path: '/app/gis', icon: Globe },
+    { name: t.nav_history, path: '/app/history', icon: History },
+    { name: t.nav_market, path: '/app/market', icon: TrendingUp },
+    { name: t.nav_more, path: '/app/more', icon: Ellipsis },
   ];
 
-  const farmer = JSON.parse(localStorage.getItem('soilai_farmer') || '{}');
+  const dock = [
+    { name: t.nav_home, path: '/app/dashboard', icon: LayoutDashboard },
+    { name: t.nav_analyze, path: '/app/analyze', icon: FlaskConical },
+    { name: t.nav_map, path: '/app/iot', icon: Map },
+    { name: t.nav_history, path: '/app/history', icon: History },
+    { name: t.nav_more, path: '/app/more', icon: Ellipsis },
+  ];
 
   const handleLogout = () => {
-    localStorage.removeItem('soilai_farmer');
+    logout();
     navigate('/login', { replace: true });
   };
 
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 860) setMenuOpen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   return (
-    <nav style={{
-      background: '#FFFFFF',
-      borderBottom: '1px solid rgba(0,0,0,0.06)',
-      padding: '0.6rem 1.5rem',
-      position: 'sticky',
-      top: 0,
-      zIndex: 50,
-      boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
-    }}>
-      <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+    <>
+      <nav className="app-nav" aria-label={t.lp_nav_primary}>
+        <div className="app-nav-inner">
+          <Link to="/app/dashboard" className="app-nav-brand" aria-label={t.lp_brand}>
+            <BrandMark size="sm" inverse />
+          </Link>
 
-        {/* Logo */}
-        <Link to="/app/dashboard" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
-          <div style={{
-            background: 'var(--primary)',
-            padding: '0.45rem',
-            borderRadius: '0.5rem',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <Sprout size={22} />
+          <div className="app-nav-links">
+            {links.map((link) => {
+              const isActive = pathActive(location.pathname, link.path);
+              return (
+                <Link
+                  key={link.path}
+                  to={link.path}
+                  className={`app-nav-link${isActive ? ' is-active' : ''}`}
+                >
+                  {link.name}
+                </Link>
+              );
+            })}
+            <Link to="/beta" className="app-nav-link app-nav-beta">
+              {t.nav_beta}
+            </Link>
           </div>
-          <span style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-heading)' }}>
-            Krishi<span style={{ color: 'var(--primary)' }}>Mitra</span>
-          </span>
-        </Link>
 
-        {/* Desktop Nav with Horizontal Scroll */}
-        <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center', overflowX: 'auto', paddingBottom: '0.2rem', scrollbarWidth: 'none' }}>
-          {links.map((link) => {
-            const isActive = location.pathname === link.path;
-            return (
-              <Link key={link.path} to={link.path} style={{
-                textDecoration: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                padding: '0.45rem 0.75rem',
-                borderRadius: '0.6rem',
-                fontWeight: 700,
-                fontSize: '0.82rem',
-                whiteSpace: 'nowrap',
-                color: isActive ? 'var(--primary)' : 'var(--text-muted)',
-                background: isActive ? 'rgba(76,175,80,0.08)' : 'transparent',
-                transition: 'all 0.2s',
-                position: 'relative',
-              }}>
-                <span style={{ fontSize: '0.95rem' }}>{link.emoji}</span>
-                {link.name}
+          <div className="app-nav-tools">
+            <LanguageSelect variant="inverse" />
+            {(farmer?.name || farmer?.profile?.fullName) && (
+              <Link to="/app/profile" className="app-farmer">
+                {farmer.name || farmer.profile?.fullName}
               </Link>
-            );
-          })}
-
-          {/* Language Selector */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '0.3rem',
-            marginLeft: '0.5rem',
-            background: 'rgba(46,125,50,0.06)',
-            borderRadius: '0.5rem',
-            padding: '0.35rem 0.5rem',
-            border: '1px solid rgba(46,125,50,0.12)',
-          }}>
-            <Globe size={15} color="var(--primary)" />
-            <select
-              value={lang}
-              onChange={(e) => setLang(e.target.value)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--primary)',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                outline: 'none',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              {langOptions.map(l => (
-                <option key={l.code} value={l.code} style={{ color: '#333' }}>{l.label}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Farmer name + Logout */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '0.6rem',
-            marginLeft: '0.5rem', paddingLeft: '0.75rem',
-            borderLeft: '1px solid var(--border)',
-          }}>
-            {farmer.name && (
-              <span style={{
-                color: 'var(--text-muted)',
-                fontSize: '0.82rem',
-                fontWeight: 700,
-                maxWidth: '120px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                🌾 {farmer.name}
-              </span>
             )}
             <button
               id="logout-btn"
+              className="app-logout"
               onClick={handleLogout}
-              title="Logout"
-              style={{
-                background: '#FFF5F5',
-                border: '1px solid #FECACA',
-                borderRadius: '0.5rem',
-                padding: '0.4rem 0.65rem',
-                color: '#DC2626',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.3rem',
-                fontSize: '0.8rem',
-                fontWeight: 700,
-                transition: 'all 0.2s',
-                fontFamily: 'inherit',
-              }}
+              title={t.nav_logout}
             >
-              <LogOut size={14} /> {t.nav_logout}
+              <LogOut size={14} />
+              <span className="app-logout-label">{t.nav_logout}</span>
+            </button>
+            <button
+              type="button"
+              className="app-menu-btn"
+              aria-expanded={menuOpen}
+              aria-label={menuOpen ? t.lp_menu_close : t.pg_menu}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {menuOpen ? <X size={18} /> : <Menu size={18} />}
+              <span>{t.pg_menu}</span>
             </button>
           </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            className="app-sheet"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <nav className="app-sheet-inner" aria-label={t.lp_nav_mobile}>
+              {[
+                ...links,
+                { name: t.dash_saathi, path: '#saathi', icon: Sparkles, action: () => { openSaathi(); setMenuOpen(false); } },
+                { name: t.nav_beta, path: '/beta', icon: Cpu },
+                { name: t.pg_account, path: '/app/profile', icon: UserRound },
+              ].map((link) => {
+                const Icon = link.icon;
+                if (link.action) {
+                  return (
+                    <button type="button" key={link.name} onClick={link.action}>
+                      <Icon size={18} /> {link.name}
+                    </button>
+                  );
+                }
+                return (
+                  <Link
+                    key={link.path}
+                    to={link.path}
+                    className={pathActive(location.pathname, link.path) ? 'is-active' : ''}
+                  >
+                    <Icon size={18} /> {link.name}
+                  </Link>
+                );
+              })}
+              <div className="app-sheet-lang">
+                <LanguageSelect />
+              </div>
+              <button type="button" onClick={handleLogout}>
+                <LogOut size={18} /> {t.nav_logout}
+              </button>
+            </nav>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <nav className="app-dock" aria-label={t.lp_nav_mobile}>
+        {dock.map((link) => {
+          const Icon = link.icon;
+          const isActive = pathActive(location.pathname, link.path);
+          return (
+            <Link
+              key={link.path}
+              to={link.path}
+              className={isActive ? 'is-active' : ''}
+            >
+              <Icon size={18} strokeWidth={isActive ? 2.4 : 2} />
+              {link.name}
+            </Link>
+          );
+        })}
+      </nav>
+    </>
   );
 };
 
 const Layout = () => {
   const location = useLocation();
+  const reduce = useReducedMotion();
+  const isGis = location.pathname === '/app/gis' || location.pathname === '/app/satellite';
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-color)' }}>
+    <div className={`app-shell${isGis ? ' is-gis' : ''}`}>
       <Navbar />
       <AnimatePresence mode="wait">
         <motion.main
           key={location.pathname}
-          initial={{ opacity: 0, y: 12 }}
+          initial={reduce ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -12 }}
-          transition={{ duration: 0.25 }}
-          className="page-container"
-          style={{ flexGrow: 1 }}
+          exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }}
+          transition={{ duration: reduce ? 0.12 : 0.28, ease: [0.16, 1, 0.3, 1] }}
+          className={`page-container${isGis ? ' is-gis' : ''}`}
         >
           <Outlet />
         </motion.main>

@@ -1,0 +1,352 @@
+.mkt-page {
+  max-width: none;
+}
+
+.mkt-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--primary);
+  font-weight: 800;
+  text-decoration: none;
+  margin-bottom: 0.55rem;
+}
+
+.mkt-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.7rem;
+  margin-bottom: 1.15rem;
+}
+
+.mkt-filters-home {
+  grid-template-columns: 1.6fr 1fr 1fr;
+}
+
+.mkt-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-filters input,
+.mkt-filters select {
+  min-height: 3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--surface);
+  padding: 0.65rem 0.8rem;
+  font: inherit;
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.mkt-search span {
+  position: relative;
+  display: block;
+}
+
+.mkt-search svg {
+  position: absolute;
+  left: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+}
+
+.mkt-search input {
+  width: 100%;
+  padding-left: 2.3rem;
+}
+
+.mkt-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 1rem;
+}
+
+.mkt-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-heading);
+  text-decoration: none;
+  border-radius: 999px;
+  padding: 0.38rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.mkt-overview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+  margin-bottom: 1.15rem;
+}
+
+a.mkt-card,
+.mkt-card {
+  display: block;
+  text-align: left;
+  text-decoration: none;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  padding: 1rem 1.05rem;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: none;
+}
+
+.mkt-card.is-active,
+a.mkt-card:hover {
+  border-color: rgba(31, 92, 50, 0.35);
+  box-shadow: 0 0 0 3px rgba(31, 92, 50, 0.12);
+}
+
+.mkt-card-kicker {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-card h3 {
+  margin: 0.45rem 0 0.15rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: -0.03em;
+  color: var(--text-heading);
+}
+
+.mkt-card .mkt-price,
+.mkt-price {
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: var(--text-heading);
+}
+
+.mkt-price-xl {
+  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  letter-spacing: -0.04em;
+  margin: 0.1rem 0;
+}
+
+.mkt-card .mkt-unit,
+.mkt-unit {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.mkt-move {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.mkt-move.up { color: #166534; }
+.mkt-move.down { color: #b42318; }
+.mkt-move.flat { color: var(--text-muted); }
+
+.mkt-hero {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.mkt-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.7rem;
+  margin: 1rem 0 0;
+}
+
+.mkt-stat-row-8 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.mkt-stat {
+  background: var(--surface-alt);
+  border-radius: 0.9rem;
+  padding: 0.8rem;
+}
+
+.mkt-stat span {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-stat strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.15rem;
+}
+
+.mkt-signal {
+  background: #17251b;
+  color: #f7f4ee;
+  border-radius: 1.2rem;
+  padding: 1.25rem 1.3rem;
+}
+
+.mkt-signal h2 {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  letter-spacing: -0.03em;
+}
+
+.mkt-signal p {
+  margin: 0;
+  opacity: 0.82;
+  line-height: 1.5;
+}
+
+.mkt-signal.above { background: #163322; }
+.mkt-signal.below { background: #3a1717; }
+
+.mkt-chart {
+  height: 280px;
+  min-height: 280px;
+  width: 100%;
+  min-width: 0;
+}
+
+.mkt-table-wrap {
+  overflow-x: auto;
+}
+
+.mkt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.mkt-table th,
+.mkt-table td {
+  text-align: left;
+  padding: 0.8rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.mkt-table th {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-table tr.is-highest {
+  background: rgba(31, 92, 50, 0.08);
+}
+
+.mkt-table tr.is-lowest {
+  background: rgba(201, 137, 26, 0.08);
+}
+
+.mkt-flag {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.mkt-sort {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.mkt-sort button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font: inherit;
+  font-weight: 800;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.mkt-sort button.is-on {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.mkt-skel {
+  min-height: 8rem;
+  border-radius: 1.1rem;
+  background: linear-gradient(90deg, var(--surface-alt) 25%, #fff 50%, var(--surface-alt) 75%);
+  background-size: 200% 100%;
+  animation: mktShimmer 1.2s linear infinite;
+}
+
+@keyframes mktShimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.mkt-yours {
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mkt-source {
+  margin: 0.85rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1100px) {
+  .mkt-filters,
+  .mkt-filters-home,
+  .mkt-overview,
+  .mkt-hero,
+  .mkt-stat-row-8 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .mkt-filters,
+  .mkt-filters-home,
+  .mkt-overview,
+  .mkt-hero,
+  .mkt-stat-row,
+  .mkt-stat-row-8 {
+    grid-template-columns: 1fr;
+  }
+}

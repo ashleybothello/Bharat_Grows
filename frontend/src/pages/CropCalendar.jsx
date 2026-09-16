@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { Calendar, Sprout, Leaf, CheckCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
+import PageHeader from '../components/PageHeader';
+import { useLang } from '../context/LanguageContext';
+import { readLatestAnalysis } from '../utils/latestAnalysis';
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const seasons = [
@@ -103,33 +106,26 @@ const getMonthColor = (mi) => {
 };
 
 export default function CropCalendar() {
-    const [selCrop, setSelCrop] = useState(0);
+    const { t } = useLang();
+    const last = readLatestAnalysis();
+    const recommended = last?.crop_prediction?.recommended_crop || last?.recommended_crops?.[0] || '';
+    const matchIdx = crops.findIndex((c) => c.name.toLowerCase() === String(recommended).toLowerCase());
+    const [selCrop, setSelCrop] = useState(matchIdx >= 0 ? matchIdx : 0);
     const [selMonth, setSelMonth] = useState(new Date().getMonth());
     const crop = crops[selCrop];
     const activeStage = crop.stages.find(s => s.month === selMonth);
     const activeCropsInMonth = crops.filter(c => c.stages.some(s => s.month === selMonth));
 
     return (
-        <div style={{ maxWidth: '1150px', margin: '0 auto', padding: '1.5rem 1rem' }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <div style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', padding: '0.6rem', borderRadius: '0.75rem', color: 'white' }}>
-                        <Calendar size={28} />
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>Smart Crop Calendar</h1>
-                        <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>AI-optimized sowing, growth stages & harvesting planner</p>
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    {seasons.map((s, i) => (
-                        <span key={i} style={{ background: `${s.color}12`, color: s.color, padding: '0.3rem 0.7rem', borderRadius: '0.5rem', fontWeight: 700, fontSize: '0.78rem', border: `1px solid ${s.color}25` }}>
-                            {s.emoji} {s.name}
-                        </span>
-                    ))}
-                </div>
-            </div>
+        <div className="farm-page">
+            <PageHeader kicker={t.pg_more_cal} title={t.pg_more_cal} lede={t.pg_more_cal_d} />
+            <p className="farm-note" style={{ marginBottom: '1rem' }}>{t.pg_cal_model_note}</p>
+            {recommended ? (
+              <p className="farm-note" style={{ marginBottom: '1rem' }}>
+                {t.pg_cal_last}: {recommended}
+                {matchIdx < 0 ? ` — ${t.pg_cal_no_timeline}` : ''}
+              </p>
+            ) : null}
 
             {/* Month Selector */}
             <div style={{ background: '#FFF', borderRadius: '1rem', padding: '1.25rem', border: '1px solid rgba(0,0,0,0.07)', marginBottom: '1.5rem' }}>

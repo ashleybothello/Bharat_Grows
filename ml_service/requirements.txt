@@ -1,6 +1,20 @@
+# BharatGrow ML service
 fastapi
 uvicorn
-xgboost
-scikit-learn
-pandas
+pydantic>=2
+joblib
 numpy
+
+# scikit-learn 1.6.1 is the version the pickles were created with. Newer
+# versions load them but emit InconsistentVersionWarning; pin to silence the
+# warning and guarantee identical inference, or retrain with train_xgboost.py.
+scikit-learn==1.6.1
+xgboost
+
+# pandas is required by services/historical_rainfall_service.py to read the
+# IMD 1901-2015 rainfall CSV.
+pandas
+
+# Optional: lets ml_service/.env override the decision engine weights.
+# Without it the weights still read from OS environment variables.
+python-dotenv

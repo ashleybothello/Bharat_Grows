@@ -1,219 +1,385 @@
 import { useLocation, Link, Navigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Sprout, CheckCircle, AlertTriangle, ArrowLeft, Droplets, Thermometer, Cloud, Leaf, TrendingUp, Send, Lightbulb, Target } from 'lucide-react';
-import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { ArrowLeft, TrendingUp, Send, Sparkles, History as HistoryIcon } from 'lucide-react';
+import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { useLang } from '../context/LanguageContext';
+import PageHeader from '../components/PageHeader';
+import DataBadge from '../components/DataBadge';
+import { qualityLabel, cropLabel, openSaathi } from './dashboard/helpers';
 
 const Results = () => {
   const location = useLocation();
   const { t } = useLang();
-  const { result, input } = location.state || {};
+  const { result, input, sensorSource, telemetrySnapshot } = location.state || {};
 
   if (!result) return <Navigate to="/app/analyze" />;
 
-  const { soil_quality, recommended_crops, improvement_tips, prediction_confidence, crop_confidences, model_accuracy } = result;
+  const { soil_quality, recommended_crops, improvement_tips, prediction_confidence, model_accuracy } = result;
+  const crops = Array.isArray(recommended_crops) ? recommended_crops : [];
+  const tips = Array.isArray(improvement_tips) ? improvement_tips : [];
+  const cropPred = result.crop_prediction || null;
+  const lead = cropPred?.recommended_crop || crops[0];
+  const modelProba = cropPred?.model_probability
+    ?? (prediction_confidence != null ? prediction_confidence : null);
+  const modelFeatures = cropPred?.features_received || null;
 
-  const qualityColor = soil_quality === 'Good' ? '#10B981' : soil_quality === 'Moderate' ? '#F59E0B' : '#EF4444';
-  const qualityBg = soil_quality === 'Good' ? 'rgba(16,185,129,0.08)' : soil_quality === 'Moderate' ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
+  // Present only on results from /api/ml/crop-decision. Older results saved from
+  // the plain /predict path simply omit these sections.
+  const decision = result.decision || null;
+  const rainfall = result.rainfall_intelligence || null;
+  const irrigation = result.irrigation || null;
+  const marketPrices = result.market_inputs?.prices || {};
+  const pricedCrops = Object.entries(marketPrices);
+  const rainfallFeature = result.rainfall_feature || null;
 
-  // Radar data from input params
   const radarData = input ? [
-    { param: 'Nitrogen', value: Math.min(input.n || 0, 140), max: 140 },
-    { param: 'Phosphorus', value: Math.min(input.p || 0, 145), max: 145 },
-    { param: 'Potassium', value: Math.min(input.k || 0, 205), max: 205 },
-    { param: 'pH', value: (input.ph || 0) * 14, max: 14 * 14 }, // Scale pH to be visible
-    { param: 'Temp', value: Math.min(input.temperature || 0, 45), max: 45 },
-    { param: 'Humidity', value: Math.min(input.humidity || 0, 100), max: 100 },
+    { param: t.analyze_nitrogen, value: Math.min(input.n || 0, 140) },
+    { param: t.analyze_phosphorus, value: Math.min(input.p || 0, 145) },
+    { param: t.analyze_potassium, value: Math.min(input.k || 0, 205) },
+    { param: t.analyze_ph, value: (input.ph || 0) * 10 },
+    { param: t.analyze_temperature, value: Math.min(input.temperature || 0, 45) },
+    { param: t.analyze_humidity, value: Math.min(input.humidity || 0, 100) },
   ] : [];
 
-  // Donut for quality score
-  const qualityScore = soil_quality === 'Good' ? 90 : soil_quality === 'Moderate' ? 60 : 30;
-  const donutData = [
-    { name: 'Score', value: qualityScore },
-    { name: 'Remaining', value: 100 - qualityScore },
-  ];
+  const snapshotConds = telemetrySnapshot?.sensors
+    ? Object.values(telemetrySnapshot.sensors).map((item) => ({
+      label: item.label,
+      value: item.value,
+      unit: item.unit || '',
+      status: item.status,
+    }))
+    : null;
 
-  // Input param cards
-  const paramCards = input ? [
-    { label: 'Nitrogen (N)', value: input.n, icon: <Leaf size={18} />, color: '#10B981' },
-    { label: 'Phosphorus (P)', value: input.p, icon: <Droplets size={18} />, color: '#3B82F6' },
-    { label: 'Potassium (K)', value: input.k, icon: <TrendingUp size={18} />, color: '#F59E0B' },
-    { label: 'pH Level', value: input.ph, icon: <Target size={18} />, color: '#8B5CF6' },
-    { label: 'Temperature', value: `${input.temperature}°C`, icon: <Thermometer size={18} />, color: '#EF4444' },
-    { label: 'Humidity', value: `${input.humidity}%`, icon: <Cloud size={18} />, color: '#14B8A6' },
-  ] : [];
-
-  const cardAnim = (delay = 0) => ({
-    initial: { y: 30, opacity: 0 },
-    animate: { y: 0, opacity: 1 },
-    transition: { duration: 0.5, delay },
-  });
+  const conds = snapshotConds || (input ? [
+    { label: t.analyze_nitrogen, value: input.n, unit: 'mg/kg' },
+    { label: t.analyze_phosphorus, value: input.p, unit: 'mg/kg' },
+    { label: t.analyze_potassium, value: input.k, unit: 'mg/kg' },
+    { label: t.analyze_ph, value: input.ph, unit: '' },
+    { label: t.analyze_moisture, value: input.moisture, unit: '%' },
+    { label: t.analyze_temperature, value: input.temperature, unit: '°C' },
+    { label: t.analyze_humidity, value: input.humidity, unit: '%' },
+    { label: t.analyze_rainfall, value: input.rainfall, unit: 'mm' },
+  ] : []);
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ maxWidth: '1000px', margin: '0 auto' }}>
+    <div className="farm-page">
+      <PageHeader
+        kicker={t.nav_results}
+        title={t.pg_results_insight}
+        lede={t.pg_results_from_model}
+        tools={<DataBadge kind={sensorSource ? 'demo' : 'analysis'} />}
+      />
 
-      {/* Back link */}
-      <Link to="/app/analyze" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', textDecoration: 'none', marginBottom: '1.5rem', fontWeight: 600, fontSize: '0.9rem' }}>
-        <ArrowLeft size={16} /> New Analysis
+      <Link to="/app/analyze" className="mkt-back" style={{ marginBottom: '1rem' }}>
+        <ArrowLeft size={16} /> {t.pg_new_analysis}
       </Link>
 
-      {/* ━━━ HERO RESULT ━━━ */}
-      <motion.div {...cardAnim(0)} className="glass" style={{ padding: '2.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '2rem', flexWrap: 'wrap', background: qualityBg, borderLeft: `4px solid ${qualityColor}` }}>
-        {/* Quality Badge */}
-        <div style={{ flex: '0 0 auto', textAlign: 'center' }}>
-          <div style={{ width: 140, height: 140, position: 'relative' }}>
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={donutData} cx="50%" cy="50%" innerRadius={45} outerRadius={62} startAngle={90} endAngle={-270} dataKey="value" stroke="none">
-                  <Cell fill={qualityColor} />
-                  <Cell fill="rgba(0,0,0,0.05)" />
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              {soil_quality === 'Good' ? <CheckCircle size={22} color={qualityColor} /> : <AlertTriangle size={22} color={qualityColor} />}
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>Score</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Quality Text */}
-        <div style={{ flex: 1, minWidth: '200px' }}>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.3rem' }}>{t.results_quality}</p>
-          <h1 style={{ fontSize: '2.8rem', fontWeight: 900, color: qualityColor, margin: '0 0 0.5rem 0', lineHeight: 1 }}>{soil_quality}</h1>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            {soil_quality === 'Good' ? 'Excellent conditions for high-yield agriculture.' : soil_quality === 'Moderate' ? 'Soil requires targeted amendments for optimal output.' : 'Critical deficiencies detected. Immediate action needed.'}
-          </p>
-          {prediction_confidence != null && (
-            <span style={{ display: 'inline-block', marginTop: '0.75rem', background: 'rgba(16,185,129,0.1)', color: '#10B981', padding: '0.3rem 0.8rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 700, border: '1px solid rgba(16,185,129,0.2)' }}>
-              Prediction Confidence: {(prediction_confidence * 100).toFixed(1)}%
-            </span>
-          )}
-          {model_accuracy && (
-            <span style={{ display: 'inline-block', marginTop: '0.5rem', marginLeft: prediction_confidence != null ? '0.5rem' : '0', background: 'rgba(139,92,246,0.1)', color: '#8B5CF6', padding: '0.3rem 0.8rem', borderRadius: '1rem', fontSize: '0.7rem', fontWeight: 600, border: '1px solid rgba(139,92,246,0.15)' }}>
-              Model Accuracy: {(model_accuracy * 100).toFixed(1)}%
-            </span>
-          )}
-        </div>
-      </motion.div>
-
-      {/* ━━━ INPUT PARAMS GRID ━━━ */}
-      {paramCards.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-          {paramCards.map((p, i) => (
-            <motion.div key={i} {...cardAnim(0.05 + i * 0.04)} className="glass" style={{ padding: '1rem', textAlign: 'center' }}>
-              <div style={{ color: p.color, marginBottom: '0.4rem', display: 'flex', justifyContent: 'center' }}>{p.icon}</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-heading)' }}>{p.value}</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>{p.label}</div>
-            </motion.div>
-          ))}
-        </div>
+      {sensorSource && (
+        <p className="farm-note">{t.pg_az_source}: {sensorSource}</p>
       )}
 
-      {/* ━━━ ROW: Radar + Crops + Tips ━━━ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <section className="rs-hero">
+        <div>
+          <p className="pg-kicker" style={{ color: 'rgba(246,241,231,0.55)' }}>{t.pg_crop_ai}</p>
+          <p className="rs-crop">{lead ? cropLabel(lead, t) : '—'}</p>
+          <p>{lead ? t.pg_best_match : t.pg_crop_unavailable}</p>
+        </div>
+        <dl className="rs-side">
+          <dt>{t.results_quality}</dt>
+          <dd>{qualityLabel(soil_quality, t)}</dd>
+          {modelProba != null && (
+            <>
+              <dt>{t.pg_model_proba}</dt>
+              <dd className="tabular">{Number(modelProba).toFixed(4)}</dd>
+            </>
+          )}
+        </dl>
+      </section>
 
-        {/* Soil Parameter Radar */}
+      {modelFeatures && (
+        <section className="az-group">
+          <h2>{t.pg_crop_ai}</h2>
+          <p className="az-meta" style={{ marginTop: 0 }}>{t.pg_crop_ai_sub}</p>
+          <dl className="rs-conds">
+            {['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'].map((key) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd className="tabular">{modelFeatures[key]}</dd>
+              </div>
+            ))}
+          </dl>
+          {cropPred?.top_crops?.length > 0 && (
+            <div className="az-chips" style={{ marginTop: '1rem' }}>
+              <span>{t.pg_alt_crop}:</span>
+              {cropPred.top_crops.map((row) => (
+                <span key={row.crop}>
+                  {cropLabel(row.crop, t)}
+                  {row.probability != null ? ` ${Number(row.probability).toFixed(4)}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+          {result.crop_explanation && (
+            <p className="rs-why">
+              <strong>{t.pg_interp}:</strong> {result.crop_explanation}
+            </p>
+          )}
+          <p className="farm-note">{t.pg_heldout_acc}: {model_accuracy != null ? Number(model_accuracy).toFixed(4) : '—'}</p>
+        </section>
+      )}
+
+      <div className="rs-grid">
+        <section className="az-group">
+          <h2>{t.pg_results_why}</h2>
+          <p className="az-meta" style={{ marginTop: 0, marginBottom: '0.85rem' }}>{t.pg_results_from_model}</p>
+          {tips.length ? (
+            <ol className="rs-tips">
+              {tips.map((tip) => (
+                <li key={tip}>{tip}</li>
+              ))}
+            </ol>
+          ) : (
+            <p className="farm-note">{t.pg_no_tips}</p>
+          )}
+          {cropPred?.top_crops?.length > 1 ? (
+            <div className="az-chips" style={{ marginTop: '1rem' }}>
+              <span>{t.pg_alt_crop}:</span>
+              {cropPred.top_crops.slice(1).map((row) => (
+                <span key={row.crop}>
+                  {cropLabel(row.crop, t)}
+                  {row.probability != null ? ` ${Number(row.probability).toFixed(4)}` : ''}
+                </span>
+              ))}
+            </div>
+          ) : crops.length > 1 ? (
+            <div className="az-chips" style={{ marginTop: '1rem' }}>
+              <span>{t.pg_alt_crop}:</span>
+              {crops.slice(1).map((crop) => (
+                <span key={crop}>{cropLabel(crop, t)}</span>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
         {radarData.length > 0 && (
-          <motion.div {...cardAnim(0.2)} className="glass" style={{ padding: '1.5rem' }}>
-            <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-heading)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Target size={18} color="#8B5CF6" /> Parameter Profile
-            </h2>
-            <div style={{ width: '100%', height: 250 }}>
+          <section className="az-group">
+            <h2>{t.pg_soil_fit}</h2>
+            <p className="az-meta" style={{ marginTop: 0 }}>{qualityLabel(soil_quality, t)}</p>
+            <div style={{ width: '100%', height: 240 }}>
               <ResponsiveContainer>
                 <RadarChart data={radarData}>
-                  <PolarGrid stroke="rgba(0,0,0,0.1)" />
-                  <PolarAngleAxis dataKey="param" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
+                  <PolarGrid stroke="rgba(20,28,22,0.12)" />
+                  <PolarAngleAxis dataKey="param" tick={{ fill: 'var(--sage)', fontSize: 11 }} />
                   <PolarRadiusAxis tick={false} axisLine={false} />
-                  <Radar name="Your Soil" dataKey="value" stroke={qualityColor} fill={qualityColor} fillOpacity={0.2} strokeWidth={2} dot={{ r: 3, fill: qualityColor }} />
+                  <Radar dataKey="value" stroke="#0e1a12" fill="#2c5a3c" fillOpacity={0.18} strokeWidth={1.6} />
                 </RadarChart>
               </ResponsiveContainer>
             </div>
-          </motion.div>
+          </section>
         )}
-
-        {/* Recommended Crops */}
-        <motion.div {...cardAnim(0.25)} className="glass" style={{ padding: '1.5rem' }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-heading)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Sprout size={18} color="#10B981" /> {t.results_crops}
-          </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            {recommended_crops.map((crop, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + idx * 0.1 }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '0.75rem',
-                  background: 'rgba(16,185,129,0.06)', padding: '1rem 1.25rem',
-                  borderRadius: '0.75rem', border: '1px solid rgba(16,185,129,0.1)',
-                }}
-              >
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: `linear-gradient(135deg, ${['#10B981','#3B82F6','#F59E0B','#8B5CF6'][idx % 4]}, ${['#059669','#1D4ED8','#D97706','#7C3AED'][idx % 4]})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '0.85rem', fontWeight: 800, flexShrink: 0 }}>
-                  {idx + 1}
-                </div>
-                <div>
-                  <span style={{ fontWeight: 700, color: 'var(--text-heading)', textTransform: 'capitalize', fontSize: '1rem' }}>{crop}</span>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: 0 }}>
-                    {idx === 0 ? 'Best match for your soil profile' : 'Alternative crop recommendation'}
-                    {crop_confidences && crop_confidences[idx] && (
-                      <span style={{ marginLeft: '0.5rem', fontWeight: 700, color: crop_confidences[idx].confidence >= 0.5 ? '#10B981' : crop_confidences[idx].confidence >= 0.2 ? '#F59E0B' : '#EF4444' }}>
-                        ({(crop_confidences[idx].confidence * 100).toFixed(1)}% confidence)
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
       </div>
 
-      {/* ━━━ ACTIONABLE TIPS ━━━ */}
-      <motion.div {...cardAnim(0.3)} className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-heading)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Lightbulb size={18} color="#F59E0B" /> {t.results_tips}
-        </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          {improvement_tips.map((tip, idx) => (
-            <motion.div
-              key={idx}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.35 + idx * 0.08 }}
-              style={{
-                display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
-                padding: '1rem 1.25rem', borderRadius: '0.75rem',
-                background: idx === 0 ? 'rgba(245,158,11,0.06)' : 'var(--surface-alt)',
-                border: idx === 0 ? '1px solid rgba(245,158,11,0.15)' : '1px solid var(--border)',
-              }}
-            >
-              <span style={{ flexShrink: 0, width: '24px', height: '24px', borderRadius: '50%', background: idx === 0 ? '#F59E0B' : 'rgba(0,0,0,0.06)', color: idx === 0 ? 'white' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, marginTop: '2px' }}>
-                {idx + 1}
-              </span>
-              <p style={{ fontSize: '0.9rem', color: idx === 0 ? '#92400E' : 'var(--text-muted)', lineHeight: 1.5, margin: 0, fontWeight: idx === 0 ? 600 : 400 }}>
-                {tip}
-              </p>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
+      {decision && (
+        <section className="az-group">
+          <h2>{t.pg_decision_h}</h2>
+          <p className="az-meta" style={{ marginTop: 0 }}>{t.pg_decision_sub}</p>
 
-      {/* ━━━ ACTION BUTTONS ━━━ */}
-      <motion.div {...cardAnim(0.4)} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
-        <Link to="/app/analyze" className="btn-primary" style={{ flex: 1, minWidth: '200px', justifyContent: 'center' }}>
-          <ArrowLeft size={16} /> Analyze Again
-        </Link>
-        <Link to="/app/communication" className="btn-primary" style={{ flex: 1, minWidth: '200px', justifyContent: 'center', background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)', boxShadow: '0 4px 15px rgba(59,130,246,0.3)' }}>
-          <Send size={16} /> SMS to Farmer
-        </Link>
-        <Link to="/app/insights" className="btn-primary" style={{ flex: 1, minWidth: '200px', justifyContent: 'center', background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)', boxShadow: '0 4px 15px rgba(139,92,246,0.3)' }}>
-          <TrendingUp size={16} /> View Insights
-        </Link>
-      </motion.div>
+          <ol className="rs-rank">
+            {decision.ranked_crops.map((row) => (
+              <li key={row.crop} className={row.crop === decision.recommended_crop ? 'is-lead' : ''}>
+                <div className="rs-rank-head">
+                  <strong>{cropLabel(row.crop, t)}</strong>
+                  <span className="tabular">{row.decision_score.toFixed(2)}</span>
+                </div>
+                <dl className="rs-rank-parts">
+                  <div>
+                    <dt>{t.pg_decision_crop_fit}</dt>
+                    <dd className="tabular">{(row.components.crop_suitability * 100).toFixed(1)}%</dd>
+                  </div>
+                  {row.components.market_attractiveness != null && (
+                    <div>
+                      <dt>{t.pg_decision_market}</dt>
+                      <dd className="tabular">
+                        {row.market_price_available
+                          ? row.components.market_attractiveness.toFixed(2)
+                          : t.pg_decision_no_price}
+                      </dd>
+                    </div>
+                  )}
+                  {row.components.field_water_condition != null && (
+                    <div>
+                      <dt>{t.pg_decision_water}</dt>
+                      <dd className="tabular">{row.components.field_water_condition.toFixed(2)}</dd>
+                    </div>
+                  )}
+                </dl>
+              </li>
+            ))}
+          </ol>
 
-    </motion.div>
+          <p className="rs-why">{decision.explanation}</p>
+
+          <div className="az-chips" style={{ marginTop: '0.9rem' }}>
+            <span>{t.pg_decision_weights}:</span>
+            {Object.entries(decision.weights_used).map(([name, weight]) => (
+              <span key={name}>{`${name} ${(weight * 100).toFixed(0)}%`}</span>
+            ))}
+          </div>
+          <p className="farm-note">{decision.methodology_note}</p>
+        </section>
+      )}
+
+      {rainfall && (
+        <section className="az-group">
+          <h2>{t.pg_rain_ai}</h2>
+          <p className="az-meta" style={{ marginTop: 0 }}>{t.pg_rain_sub}</p>
+
+          <dl className="rs-conds">
+            <div>
+              <dt>{t.pg_rain_today}</dt>
+              <dd className="tabular">{rainfall.rainfall_today_mm} mm</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_24h}</dt>
+              <dd className="tabular">{rainfall.rainfall_next_24h_mm} mm</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_3d}</dt>
+              <dd className="tabular">{rainfall.rainfall_next_3_days_mm} mm</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_trend}</dt>
+              <dd>{rainfall.rainfall_trend}</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_dry}</dt>
+              <dd>{rainfall.dry_spell_risk}</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_heavy}</dt>
+              <dd>{rainfall.heavy_rain_risk}</dd>
+            </div>
+            <div>
+              <dt>{t.pg_rain_waterlog}</dt>
+              <dd>{rainfall.waterlogging_risk}</dd>
+            </div>
+            {rainfall.historical_context?.available && (
+              <div>
+                <dt>{t.pg_rain_baseline}</dt>
+                <dd className="tabular">{rainfall.historical_context.monthly_baseline_mm} mm</dd>
+              </div>
+            )}
+          </dl>
+
+          {rainfall.historical_context?.available && (
+            <p className="farm-note">
+              {rainfall.historical_context.subdivision} · {rainfall.historical_context.period} ·{' '}
+              {rainfall.historical_context.geographic_note}
+            </p>
+          )}
+
+          {irrigation && (
+            <p className="rs-why">
+              <strong>{t.pg_rain_irrigation}: {irrigation.decision}</strong> — {irrigation.reason}
+            </p>
+          )}
+
+          <p className="farm-note">{rainfall.method?.forecast_source} · {rainfall.method?.type}</p>
+        </section>
+      )}
+
+      {!rainfall && (
+        <section className="az-group">
+          <h2>{t.pg_rain_ai}</h2>
+          <p className="farm-note">{t.pg_rain_unavailable}</p>
+        </section>
+      )}
+
+      {pricedCrops.length > 0 && (
+        <section className="az-group">
+          <h2>{t.pg_rmkt_h}</h2>
+          <p className="az-meta" style={{ marginTop: 0 }}>{t.pg_rmkt_sub}</p>
+          <dl className="rs-conds">
+            {pricedCrops.map(([crop, info]) => (
+              <div key={crop}>
+                <dt>{cropLabel(crop, t)}</dt>
+                <dd className="tabular">₹{info.modal_price.toLocaleString('en-IN')}</dd>
+                <p className="farm-note" style={{ margin: '0.2rem 0 0' }}>
+                  {info.commodity} · {info.scope} · {info.arrival_date}
+                </p>
+              </div>
+            ))}
+          </dl>
+          <p className="farm-note">{result.market_inputs?.source}</p>
+        </section>
+      )}
+
+      {input && (
+        <>
+          <h2 className="az-group" style={{ marginBottom: '0.55rem' }}>{t.pg_climate_fit}</h2>
+          <dl className="rs-conds" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+            <div>
+              <dt>{t.analyze_temperature}</dt>
+              <dd className="tabular">{input.temperature}°C</dd>
+            </div>
+            <div>
+              <dt>{t.analyze_humidity}</dt>
+              <dd className="tabular">{input.humidity}%</dd>
+            </div>
+            <div>
+              <dt>{t.analyze_rainfall}</dt>
+              <dd className="tabular">
+                {rainfallFeature ? rainfallFeature.value_mm : input.rainfall} mm
+              </dd>
+            </div>
+          </dl>
+          {rainfallFeature && (
+            <p className="farm-note">
+              {t.pg_rain_feature_src}: {rainfallFeature.source}
+            </p>
+          )}
+
+          <h2 className="az-group" style={{ marginBottom: '0.55rem' }}>{t.pg_field_cond}</h2>
+          <dl className="rs-conds">
+            {conds.map((item) => (
+              <div key={item.label}>
+                <dt>{item.label}</dt>
+                <dd className="tabular">
+                  {item.value}{item.unit ? ` ${item.unit}` : ''}
+                  {item.status ? ` · ${qualityLabel(item.status, t)}` : ''}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
+
+      {result.disclaimer && <p className="rs-disclaimer">{result.disclaimer}</p>}
+
+      {result.saved === false && (
+        <p className="farm-note">{t.pg_not_saved}</p>
+      )}
+
+      <div className="farm-cta-actions">
+        <Link to="/app/market" className="btn-primary">
+          <TrendingUp size={16} /> {t.pg_view_market}
+        </Link>
+        <Link to="/app/analyze" className="btn-secondary">
+          {t.pg_analyze_again}
+        </Link>
+        <button type="button" className="btn-secondary" onClick={openSaathi}>
+          <Sparkles size={16} /> {t.pg_ask_saathi}
+        </button>
+        <Link to="/app/history" className="btn-secondary">
+          <HistoryIcon size={16} /> {t.pg_view_history}
+        </Link>
+        <Link to="/app/communication" className="btn-secondary">
+          <Send size={16} /> {t.pg_sms}
+        </Link>
+        <Link to="/app/insights" className="btn-secondary">
+          {t.pg_view_insights}
+        </Link>
+      </div>
+    </div>
   );
 };
 

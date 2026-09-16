@@ -136,6 +136,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.production
 .envrc
 .venv
 env/
@@ -205,3 +207,20 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node / frontend / backend runtime
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Local data, exports, and editor/tooling
+soil/backend/.data/
+.tmp-exports/
+.playwright-mcp/
+hardware-beta-after-backend.png
+
+# Credential files (never commit)
+*.pem
+*.p12
+credentials.json
+service-account*.json
