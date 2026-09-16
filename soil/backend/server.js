@@ -10,19 +10,39 @@ const marketService = require('./services/market/marketService');
 const ml = require('./routes/ml');
 const telemetry = require('./routes/telemetry');
 const hardware = require('./routes/hardware');
+const pest = require('./routes/pest');
 const simulationEngine = require('./services/telemetry/simulationEngine');
 const espIngest = require('./services/telemetry/espIngest');
 const saathiContext = require('./services/saathi/farmContext');
 
 const app = express();
-app.use(cors());
+app.set('trust proxy', 1);
 app.use(express.json());
+
+function corsOrigin() {
+  const raw = String(process.env.FRONTEND_URL || '').trim();
+  if (!raw || raw === '*') return true;
+  const allowed = raw.split(',').map((item) => item.trim()).filter(Boolean);
+  return (origin, callback) => {
+    if (!origin || allowed.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  };
+}
+
+app.use(cors({ origin: corsOrigin() }));
 
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'BharatGrow API is running',
   });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ success: true, service: 'bharatgrow-api' });
 });
 
 // Initialize Database
@@ -151,6 +171,9 @@ app.use('/api', (req, res, next) => {
 
 // Physical ESP32 Hardware Beta — public live read, separate from simulated nodes.
 app.use('/api/hardware', hardware.router);
+
+// Kindwise plant.id leaf scan — API key stays on the server.
+app.use('/api/pest', pest.router);
 
 // REAL SMS — Fast2SMS API (No simulation)
 app.post('/api/send-sms', async (req, res) => {
@@ -730,66 +753,8 @@ app.get('/api/weather/forecast', (req, res) => {
   });
 });
 
-// POST /api/pest/detect — AI Vision Leaf Disease & Pest Scanner
-app.post('/api/pest/detect', (req, res) => {
-  const { sample_id, crop } = req.body;
-
-  const catalog = {
-    tomato_blight: {
-      disease_name: 'Early Blight (Alternaria solani)',
-      crop: 'Tomato',
-      confidence: 96.4,
-      severity: 'Moderate (Level 2/4)',
-      affected_area_pct: 18,
-      symptoms: 'Concentric brown spots with yellow halo surrounding the leaves.',
-      organic_treatment: 'Spray Neem Seed Kernel Extract (NSKE 5%) or Trichoderma viride bio-fungicide every 7 days.',
-      chemical_treatment: 'Mancozeb 75% WP @ 2g/liter or Azoxystrobin 23% SC @ 1ml/liter water.',
-      prevention: 'Ensure proper plant spacing for air circulation and avoid overhead foliar watering.'
-    },
-    wheat_rust: {
-      disease_name: 'Yellow Stripe Rust (Puccinia striiformis)',
-      crop: 'Wheat',
-      confidence: 94.8,
-      severity: 'Severe (Level 3/4)',
-      affected_area_pct: 32,
-      symptoms: 'Yellow pustules arranged in linear stripes along the leaf veins.',
-      organic_treatment: 'Apply fermented sour buttermilk solution (1 liter in 10 liters water) + Panchagavya spray.',
-      chemical_treatment: 'Propiconazole 25% EC @ 1ml/liter or Tebuconazole 50% + Trifloxystrobin 25% WG @ 0.7g/liter.',
-      prevention: 'Plant resistant cultivars like HD-3086 or DBW-187 and destroy alternate host weeds.'
-    },
-    cotton_aphids: {
-      disease_name: 'Cotton Aphid Infestation (Aphis gossypii)',
-      crop: 'Cotton',
-      confidence: 98.1,
-      severity: 'Mild (Level 1/4)',
-      affected_area_pct: 12,
-      symptoms: 'Curled leaves with sticky honeydew secretions and black sooty mold growth.',
-      organic_treatment: 'Spray Verticillium lecanii bio-insecticide @ 5g/liter or 2% Neem oil solution with soap.',
-      chemical_treatment: 'Imidacloprid 17.8% SL @ 0.5ml/liter or Acetamiprid 20% SP @ 0.2g/liter.',
-      prevention: 'Install yellow sticky traps (15 traps/acre) and release Ladybird beetles (predatory natural enemies).'
-    },
-    rice_blast: {
-      disease_name: 'Rice Leaf Blast (Magnaporthe oryzae)',
-      crop: 'Rice / Paddy',
-      confidence: 95.2,
-      severity: 'High (Level 3/4)',
-      affected_area_pct: 28,
-      symptoms: 'Spindle-shaped elliptical lesions with grey/white centers and reddish-brown margins.',
-      organic_treatment: 'Foliar application of Pseudomonas fluorescens @ 10g/liter or Kasugamycin bio-antibiotic.',
-      chemical_treatment: 'Tricyclazole 75% WP @ 0.6g/liter or Isoprothiolane 40% EC @ 1.5ml/liter.',
-      prevention: 'Avoid excess split doses of nitrogenous fertilizers and maintain field water level.'
-    }
-  };
-
-  const key = sample_id || 'tomato_blight';
-  const result = catalog[key] || catalog['tomato_blight'];
-
-  res.json({
-    success: true,
-    timestamp: new Date().toISOString(),
-    ...result
-  });
-});
+// POST /api/pest/detect and /api/pest/insect live in routes/pest.js
+// (Kindwise plant.id + insect.id). Keys stay in .env.
 
 // POST /api/fertilizer/optimize — Precision dosing & eco-friendly carbon footprint score
 app.post('/api/fertilizer/optimize', (req, res) => {
@@ -941,9 +906,10 @@ app.get('/api/market/forecast', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5005;
-app.listen(PORT, () => {
-  console.log(`Node.js Backend server running on port ${PORT}`);
+const PORT = Number(process.env.PORT) || 5005;
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`Node.js Backend server running on ${HOST}:${PORT}`);
   console.log(`Fast2SMS configured: ${process.env.FAST2SMS_API_KEY ? 'yes' : 'no'}`);
   console.log(`DATA_GOV_API_KEY loaded: ${Boolean(String(process.env.DATA_GOV_API_KEY || '').trim())}`);
   setTimeout(() => {

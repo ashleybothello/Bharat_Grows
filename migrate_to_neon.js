@@ -6,8 +6,12 @@
 
 const { Pool } = require('pg');
 
-const LOCAL_URL = 'postgresql://postgres:Rohita@2006@localhost:5432/soil_ml_db';
-const NEON_URL = 'postgresql://neondb_owner:npg_2FDW6LjztvCw@ep-plain-scene-amcqaos3-pooler.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const LOCAL_URL = process.env.SOURCE_DATABASE_URL;
+const NEON_URL = process.env.TARGET_DATABASE_URL;
+if (!LOCAL_URL || !NEON_URL) {
+  console.error('Set SOURCE_DATABASE_URL and TARGET_DATABASE_URL. Do not hardcode credentials.');
+  process.exit(1);
+}
 
 const localPool = new Pool({ connectionString: LOCAL_URL });
 const neonPool  = new Pool({ connectionString: NEON_URL, ssl: { rejectUnauthorized: false } });

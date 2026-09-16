@@ -101,7 +101,7 @@ const Insights = () => {
           {accuracy != null ? (
             <>
               <div style={{ width: '100%', height: 180 }}>
-                <ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                   <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="90%" startAngle={180} endAngle={0} data={gaugeData} barSize={16}>
                     <RadialBar background={{ fill: 'rgba(20,28,22,0.06)' }} clockWise dataKey="value" cornerRadius={8} />
                   </RadialBarChart>
@@ -124,7 +124,7 @@ const Insights = () => {
           <h2>{t.pg_ins_radar}</h2>
           <div style={{ width: '100%', height: 280 }}>
             {featureData.length ? (
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <RadarChart data={featureData}>
                   <PolarGrid stroke="rgba(20,28,22,0.12)" />
                   <PolarAngleAxis dataKey="name" tick={{ fill: 'var(--sage)', fontSize: 11 }} />
@@ -144,7 +144,7 @@ const Insights = () => {
           <h2>{t.pg_ins_feat}</h2>
           <div style={{ width: '100%', height: 280 }}>
             {featureData.length ? (
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={featureData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(20,28,22,0.08)" />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
@@ -163,7 +163,7 @@ const Insights = () => {
           <h2>{t.pg_ins_qual}</h2>
           <div style={{ width: '100%', height: 280 }}>
             {qualityData.length ? (
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <PieChart>
                   <Pie data={qualityData} cx="50%" cy="50%" innerRadius={58} outerRadius={92} paddingAngle={3} dataKey="value" label={({ name }) => name}>
                     {qualityData.map((entry) => (
@@ -184,8 +184,8 @@ const Insights = () => {
         <section className="az-group">
           <h2>{t.pg_ins_trend}</h2>
           <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <AreaChart data={trendData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <AreaChart data={trendData} margin={{ top: 10, right: 8, left: -16, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(20,28,22,0.08)" />
                 <XAxis dataKey="analysis" tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: 'var(--sage)' }} axisLine={false} tickLine={false} />
@@ -206,7 +206,7 @@ const Insights = () => {
           <section className="az-group">
             <h2>{t.pg_ins_crops}</h2>
             <div style={{ width: '100%', height: 260 }}>
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <PieChart>
                   <Pie data={cropPieData} cx="50%" cy="50%" outerRadius={90} dataKey="value" label={({ name }) => name}>
                     {cropPieData.map((_, i) => (

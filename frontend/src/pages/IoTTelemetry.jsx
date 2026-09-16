@@ -533,7 +533,7 @@ export default function IoTTelemetry() {
                     </div>
                     <div className="map-chart">
                       {series?.points?.length ? (
-                        <ResponsiveContainer width="100%" height={180}>
+                        <ResponsiveContainer width="100%" height={180} minWidth={0}>
                           <LineChart data={series.points.map((p) => ({ ...p, t: new Date(p.t).toLocaleString() }))}>
                             <CartesianGrid stroke="rgba(20,28,22,0.08)" />
                             <XAxis dataKey="t" hide />

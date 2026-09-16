@@ -36,6 +36,10 @@ function poolConfigFromUrl(raw) {
 const poolCfg = poolConfigFromUrl(process.env.DATABASE_URL);
 const pool = new Pool(poolCfg || {});
 
+pool.on('error', (err) => {
+  console.error('[pg] idle client error:', err.code || err.message);
+});
+
 const initDB = async () => {
   if (!process.env.DATABASE_URL) {
     console.log('DATABASE_URL not set — OTP auth will use an in-memory store.');

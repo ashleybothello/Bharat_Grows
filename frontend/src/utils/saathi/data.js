@@ -251,6 +251,18 @@ export async function getSaathiData(plan, results = [], extras = {}) {
     }
   }
 
+  if (intent === 'SOIL_STABILIZE') {
+    const analysis = readLatestAnalysis();
+    if (!analysis?.input) {
+      return { ok: false, error: 'no_analysis' };
+    }
+    return {
+      ok: true,
+      analysis,
+      usingSensors: Boolean(analysis.usingSensors),
+    };
+  }
+
   if (intent === 'PEST_INFO' || intent === 'FERTILIZER_INFO' || intent === 'CALENDAR_INFO'
     || intent === 'WATER_INFO' || intent === 'SUSTAIN_INFO' || intent === 'SCHEMES_INFO'
     || intent === 'EXPORT_INFO') {

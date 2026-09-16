@@ -54,11 +54,16 @@ const Navbar = () => {
 
   useEffect(() => {
     const onResize = () => {
-      if (window.innerWidth > 860) setMenuOpen(false);
+      if (window.innerWidth > 1023) setMenuOpen(false);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle('app-menu-open', menuOpen);
+    return () => document.body.classList.remove('app-menu-open');
+  }, [menuOpen]);
 
   return (
     <>

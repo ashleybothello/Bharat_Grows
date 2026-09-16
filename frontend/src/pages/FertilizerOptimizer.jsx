@@ -4,8 +4,7 @@ import { motion } from 'framer-motion';
 import axios from 'axios';
 import PageHeader from '../components/PageHeader';
 import { useLang } from '../context/LanguageContext';
-
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5005';
+import { API_URL } from '../utils/api';
 
 export default function FertilizerOptimizer() {
   const { t } = useLang();
@@ -18,7 +17,7 @@ export default function FertilizerOptimizer() {
   const calculateDose = async () => {
     setLoading(true);
     try {
-      const res = await axios.post(`${BACKEND_URL}/api/fertilizer/optimize`, {
+      const res = await axios.post(`${API_URL}/api/fertilizer/optimize`, {
         crop,
         land_acres: acres,
         target_yield_quintals: targetYield
@@ -43,7 +42,7 @@ export default function FertilizerOptimizer() {
       <PageHeader kicker={t.pg_more_fert} title={t.pg_more_fert} lede={t.pg_more_fert_d} />
 
       {/* Main Grid: Controls + Sustainability Scorecard */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+      <div className="bg-fluid-grid" style={{ marginBottom: '2rem' }}>
         
         {/* Controls Card */}
         <div style={{ background: '#FFFFFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>
@@ -132,7 +131,7 @@ export default function FertilizerOptimizer() {
       </div>
 
       {/* Dosing Tables Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem' }}>
+      <div className="bg-fluid-grid">
         
         {/* Synthetic Dosage Schedule */}
         <div style={{ background: '#FFFFFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>

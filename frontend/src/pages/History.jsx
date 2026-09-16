@@ -13,7 +13,7 @@ import {
 import EmptyState from '../components/EmptyState';
 import PageHeader from '../components/PageHeader';
 import DataBadge from '../components/DataBadge';
-import { qualityLabel, cropLabel, cropsOf, formatDashDate, formatDateTime } from './dashboard/helpers';
+import { qualityLabel, cropLabel, cropsOf, formatDashDate } from './dashboard/helpers';
 import { completeAction, emitPageGone, emitPageReady, sleep, subscribeSaathi } from '../utils/saathi/bus';
 
 const RANGES = ['1d', '1w', '1m', '1y'];
@@ -234,7 +234,7 @@ const History = () => {
             return (
               <article key={item.prediction_id}>
                 <time dateTime={item.created_at}>
-                  {formatDashDate(item.created_at, lang) || formatDateTime(item.created_at, lang)}
+                  {formatDashDate(item.created_at, lang) || new Date(item.created_at).toLocaleString()}
                 </time>
                 <div>
                   <h3>
@@ -302,8 +302,8 @@ const History = () => {
           </div>
           <div className="map-chart">
             {series?.points?.length ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={series.points.map((p) => ({ ...p, t: formatDateTime(p.t, lang) }))}>
+              <ResponsiveContainer width="100%" height={220} minWidth={0}>
+                <LineChart data={series.points.map((p) => ({ ...p, t: new Date(p.t).toLocaleString() }))}>
                   <CartesianGrid stroke="rgba(20,28,22,0.08)" />
                   <XAxis dataKey="t" hide />
                   <YAxis width={36} tick={{ fontSize: 10, fill: 'var(--sage)' }} />
@@ -326,17 +326,17 @@ const History = () => {
           <div className="journal">
             {sensorRows.map((row) => (
               <article key={row.id} className={row.status === 'CRITICAL' ? 'is-critical' : ''}>
-                <time dateTime={row.at}>{formatDateTime(row.at, lang)}</time>
+                <time dateTime={row.at}>{new Date(row.at).toLocaleString()}</time>
                 <div>
                   <h3>{t.pg_hist_node} {row.node} · {row.sensor}</h3>
                   <div className="tabular">
                     <span>{row.value}{row.unit ? ` ${row.unit}` : ''}</span>
-                    <span>{qualityLabel(row.status, t)}</span>
+                    <span>{row.status}</span>
                     {row.status === 'CRITICAL' ? <span>{t.pg_hist_anomaly_flag}</span> : null}
                   </div>
                 </div>
                 <span className={`quality-pill is-${String(row.status || '').toLowerCase()}`}>
-                  {qualityLabel(row.status, t)}
+                  {row.status}
                 </span>
               </article>
             ))}
@@ -375,7 +375,7 @@ const History = () => {
             {nodes.map((node) => (
               <article key={node.nodeId} className={node.health === 'CRITICAL' ? 'is-critical' : ''}>
                 <time dateTime={node.lastReadingAt || undefined}>
-                  {node.lastReadingAt ? formatDateTime(node.lastReadingAt, lang) : t.pg_map_waiting}
+                  {node.lastReadingAt ? new Date(node.lastReadingAt).toLocaleString() : t.pg_map_waiting}
                 </time>
                 <div>
                   <h3>{node.nodeId} · {node.zone}</h3>
@@ -402,14 +402,14 @@ const History = () => {
           <div className="journal">
             {anomalies.rows.map((row) => (
               <article key={row.id} className={row.severity === 'CRITICAL' ? 'is-critical' : ''}>
-                <time dateTime={row.detected_at}>{formatDateTime(row.detected_at, lang)}</time>
+                <time dateTime={row.detected_at}>{new Date(row.detected_at).toLocaleString()}</time>
                 <div>
                   <h3>
                     {t.pg_hist_node} {row.node_number || row.node_id} · {t.pg_hist_sensor} {row.sensor}
                   </h3>
                   <div className="tabular">
                     <span>{row.value}</span>
-                    <span>{qualityLabel(row.severity, t)}</span>
+                    <span>{row.severity}</span>
                     {row.email_sent ? <span>email</span> : null}
                     {row.sms_sent ? <span>sms</span> : null}
                   </div>
@@ -429,14 +429,14 @@ const History = () => {
           <div className="journal">
             {criticalAlerts.map((row) => (
               <article key={row.id} className="is-critical">
-                <time dateTime={row.detected_at}>{formatDateTime(row.detected_at, lang)}</time>
+                <time dateTime={row.detected_at}>{new Date(row.detected_at).toLocaleString()}</time>
                 <div>
                   <h3>
                     {t.pg_hist_node} {row.node_number || row.node_id} · {row.sensor}
                   </h3>
                   <div className="tabular">
                     <span>{row.value}</span>
-                    <span>{t.health_critical}</span>
+                    <span>CRITICAL</span>
                     <span>{row.email_sent ? t.pg_hist_email_sent : t.pg_hist_email_pending}</span>
                     <span>{row.sms_sent ? t.pg_hist_sms_sent : t.pg_hist_sms_pending}</span>
                   </div>

@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: bharatgrow-ml
+    runtime: python
+    rootDir: ml_service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+
+  - type: web
+    name: bharatgrow-api
+    runtime: node
+    rootDir: soil/backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: HOST
+        value: "0.0.0.0"
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ML_SERVICE_URL
+        sync: false
+      - key: DATA_GOV_API_KEY
+        sync: false
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PLANT_ID_API_KEY
+        sync: false
+      - key: PLANT_HEALTH_API_KEY
+        sync: false
+      - key: INSECT_ID_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_HASH_SECRET
+        generateValue: true
+      - key: ESP_GATEWAY_URL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
+      - key: OTP_PROVIDER
+        value: fast2sms
+      - key: SIM_ENABLED
+        value: "true"

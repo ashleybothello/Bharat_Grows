@@ -133,7 +133,7 @@ export default function CropCalendar() {
                     <h3 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-heading)', margin: 0 }}>Select Month</h3>
                     <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{activeCropsInMonth.length} crops active in {months[selMonth]}</span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12,1fr)', gap: '0.4rem' }}>
+                <div className="cal-month-grid">
                     {months.map((m, i) => (
                         <button key={i} onClick={() => setSelMonth(i)} style={{
                             background: selMonth === i ? getMonthColor(i) : `${getMonthColor(i)}10`,
@@ -146,7 +146,7 @@ export default function CropCalendar() {
             </div>
 
             {/* Crop Tabs */}
-            <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.5rem', marginBottom: '1.5rem' }}>
+            <div className="cal-crop-tabs">
                 {crops.map((c, i) => (
                     <button key={i} onClick={() => setSelCrop(i)} style={{
                         background: selCrop === i ? c.color : '#FFF',
@@ -158,7 +158,7 @@ export default function CropCalendar() {
             </div>
 
             {/* Main Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(350px,1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="bg-fluid-grid" style={{ marginBottom: '2rem' }}>
                 {/* Timeline */}
                 <div style={{ background: '#FFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.2rem' }}>

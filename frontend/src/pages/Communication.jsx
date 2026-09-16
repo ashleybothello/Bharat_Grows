@@ -229,7 +229,7 @@ const Communication = () => {
         )}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '2rem' }}>
+      <div className="bg-fluid-grid" style={{ gap: '2rem' }}>
         
         {/* ━━━ REAL SMS PANEL ━━━ */}
         <motion.div
@@ -257,7 +257,7 @@ const Communication = () => {
               <input 
                 id="comm-phone-input"
                 type="tel" value={phone} onChange={e => setPhone(e.target.value)} 
-                placeholder={t.comm_phone_eg || t.phone_placeholder} required 
+                placeholder="e.g. 9876543210" required 
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '0.6rem', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)', outline: 'none', fontSize: '0.9rem', transition: 'all 0.3s' }} 
               />
             </div>
@@ -271,7 +271,7 @@ const Communication = () => {
               </div>
               <textarea 
                 value={smsMessage} onChange={e => setSmsMessage(e.target.value)}
-                placeholder={t.comm_msg_ph}
+                placeholder="Type your message or click 'Use Last Analysis' to auto-fill from soil results..."
                 rows={5}
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '0.6rem', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)', outline: 'none', fontSize: '0.85rem', resize: 'vertical', lineHeight: 1.5, fontFamily: 'inherit' }}
               />

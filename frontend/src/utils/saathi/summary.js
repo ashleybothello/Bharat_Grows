@@ -2,6 +2,7 @@ import { extras } from '../i18n-dynamic';
 import { formatInr } from '../market';
 import { formatActionReply, formatDataReply } from './reply';
 import { NUTRIENT_KEYS, SOIL_KEYS } from './data';
+import { getSoilStabilizationRecommendations } from '../soil/soilStabilization';
 
 function tx(t, key, ...args) {
   const value = t?.[key] ?? extras.en[key];
@@ -307,6 +308,28 @@ export function formatInfoReply(plan, data, results, t = extras.en) {
       title: tx(t, 'saathi_info_irr_title'),
       sections: rows.length ? [{ heading: tx(t, 'saathi_sec_summary'), rows }] : [],
       conclusion: tx(t, 'saathi_info_irr_note'),
+    });
+  }
+
+  if (intent === 'SOIL_STABILIZE') {
+    if (!data?.ok) {
+      return pack({
+        title: tx(t, 'saathi_info_stab_title'),
+        conclusion: tx(t, 'pg_stab_need_analysis'),
+      });
+    }
+    const packStab = getSoilStabilizationRecommendations(data.analysis?.input || {}, {
+      usingSensors: data.usingSensors,
+    });
+    const issueLabels = packStab.issues.map((issue) => tx(t, issue.labelKey)).filter(Boolean);
+    const actions = (packStab.overallStatus === 'stable' ? packStab.maintenanceTips : packStab.recommendations)
+      .slice(0, 4)
+      .map((item) => ({ label: tx(t, item.titleKey), value: tx(t, item.bodyKey) }));
+    return pack({
+      title: tx(t, 'saathi_info_stab_title'),
+      overall: packStab.overallStatus === 'stable' ? tx(t, 'pg_stab_balanced') : issueLabels.join(', '),
+      sections: actions.length ? [{ heading: tx(t, 'pg_stab_actions'), rows: actions }] : [],
+      conclusion: tx(t, 'saathi_info_stab_note'),
     });
   }
 

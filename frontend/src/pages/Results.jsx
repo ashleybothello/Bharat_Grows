@@ -1,17 +1,53 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, Link, Navigate } from 'react-router-dom';
+import axios from 'axios';
 import { ArrowLeft, TrendingUp, Send, Sparkles, History as HistoryIcon } from 'lucide-react';
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { useLang } from '../context/LanguageContext';
+import { API_URL } from '../utils/api';
 import PageHeader from '../components/PageHeader';
 import DataBadge from '../components/DataBadge';
+import SoilStabilizationCard from '../components/SoilStabilizationCard';
 import { qualityLabel, cropLabel, openSaathi } from './dashboard/helpers';
+import { getSoilStabilizationRecommendations } from '../utils/soil/soilStabilization';
 
 const Results = () => {
   const location = useLocation();
   const { t } = useLang();
-  const { result, input, sensorSource, telemetrySnapshot } = location.state || {};
+  const { result, input, sensorSource, telemetrySnapshot, usingSensors } = location.state || {};
+  const [previous, setPrevious] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await axios.get(`${API_URL}/history`, { timeout: 15000 });
+        if (cancelled || !Array.isArray(data) || !data.length) return;
+        const sameAsCurrent = (row) => input && ['n', 'p', 'k', 'ph', 'moisture'].every((key) => {
+          const a = Number(row?.[key]);
+          const b = Number(input[key]);
+          return Number.isFinite(a) && Number.isFinite(b) && a === b;
+        });
+        const prior = data.find((row) => !sameAsCurrent(row));
+        if (prior) setPrevious(prior);
+      } catch {
+        if (!cancelled) setPrevious(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [input]);
+
+  const stabPack = useMemo(() => {
+    if (!input) return null;
+    return getSoilStabilizationRecommendations(input, {
+      usingSensors: Boolean(usingSensors || telemetrySnapshot),
+      telemetrySnapshot,
+      previous,
+    });
+  }, [input, usingSensors, telemetrySnapshot, previous]);
 
   if (!result) return <Navigate to="/app/analyze" />;
+
 
   const { soil_quality, recommended_crops, improvement_tips, prediction_confidence, model_accuracy } = result;
   const crops = Array.isArray(recommended_crops) ? recommended_crops : [];
@@ -165,7 +201,7 @@ const Results = () => {
             <h2>{t.pg_soil_fit}</h2>
             <p className="az-meta" style={{ marginTop: 0 }}>{qualityLabel(soil_quality, t)}</p>
             <div style={{ width: '100%', height: 240 }}>
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <RadarChart data={radarData}>
                   <PolarGrid stroke="rgba(20,28,22,0.12)" />
                   <PolarAngleAxis dataKey="param" tick={{ fill: 'var(--sage)', fontSize: 11 }} />
@@ -177,6 +213,8 @@ const Results = () => {
           </section>
         )}
       </div>
+
+      {stabPack && <SoilStabilizationCard pack={stabPack} />}
 
       {decision && (
         <section className="az-group">
@@ -316,7 +354,7 @@ const Results = () => {
       {input && (
         <>
           <h2 className="az-group" style={{ marginBottom: '0.55rem' }}>{t.pg_climate_fit}</h2>
-          <dl className="rs-conds" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          <dl className="rs-conds">
             <div>
               <dt>{t.analyze_temperature}</dt>
               <dd className="tabular">{input.temperature}°C</dd>
@@ -345,7 +383,7 @@ const Results = () => {
                 <dt>{item.label}</dt>
                 <dd className="tabular">
                   {item.value}{item.unit ? ` ${item.unit}` : ''}
-                  {item.status ? ` · ${qualityLabel(item.status, t)}` : ''}
+                  {item.status ? ` · ${item.status}` : ''}
                 </dd>
               </div>
             ))}

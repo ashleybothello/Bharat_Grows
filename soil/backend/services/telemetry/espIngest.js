@@ -11,7 +11,6 @@ const axios = require('axios');
 const store = require('./espStore');
 const { evaluateReading } = require('./sensorSpec');
 
-const DEFAULT_URL = 'http://10.111.226.121:8000/api/sensor-data';
 const DEFAULT_INTERVAL_MS = 5000;
 
 let timer = null;
@@ -27,7 +26,7 @@ const stats = {
 };
 
 function gatewayUrl() {
-  return String(process.env.ESP_GATEWAY_URL || DEFAULT_URL).trim();
+  return String(process.env.ESP_GATEWAY_URL || '').trim();
 }
 
 function intervalMs() {
@@ -99,6 +98,9 @@ async function tick() {
 
 async function start() {
   if (timer) return { started: true, already: true, intervalMs: intervalMs() };
+  if (!gatewayUrl()) {
+    return { started: false, reason: 'ESP_GATEWAY_URL not set' };
+  }
   if (!store.dbEnabled()) {
     return { started: false, reason: 'DATABASE_URL not set' };
   }

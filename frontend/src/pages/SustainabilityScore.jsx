@@ -17,7 +17,7 @@ export default function SustainabilityScore() {
         <div className="farm-page">
             <PageHeader kicker={t.pg_more_esg} title={t.pg_more_esg} lede={t.pg_more_esg_d} />
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="bg-fluid-grid" style={{ marginBottom: '2rem' }}>
 
                 {/* Main Score */}
                 <div style={{ background: 'linear-gradient(135deg, #14532D, #166534)', borderRadius: '1rem', padding: '2rem', color: 'white', textAlign: 'center', boxShadow: '0 8px 25px rgba(22, 101, 52, 0.3)' }}>

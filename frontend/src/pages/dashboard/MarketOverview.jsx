@@ -44,7 +44,7 @@ export default function MarketOverview({ latest, points, marketError, marketLoad
         <div className="dash-chart">
           <p className="dash-chart-label">{t.dash_trend}</p>
           {points.length > 1 ? (
-            <ResponsiveContainer width="100%" height={148}>
+            <ResponsiveContainer width="100%" height={148} minWidth={0}>
               <AreaChart data={points} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
                 <XAxis dataKey="date" hide />
                 <Tooltip

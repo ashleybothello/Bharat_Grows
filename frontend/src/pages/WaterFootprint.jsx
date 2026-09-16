@@ -45,7 +45,7 @@ export default function WaterFootprint() {
         <div className="farm-page">
             <PageHeader kicker={t.pg_more_water} title={t.pg_more_water} lede={t.pg_more_water_d} />
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="bg-fluid-grid" style={{ marginBottom: '2rem' }}>
 
                 {/* Calculator */}
                 <div style={{ background: '#FFFFFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>
@@ -101,7 +101,7 @@ export default function WaterFootprint() {
                 {/* Breakdown Charts */}
                 <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: '1.5rem' }}>
 
-                    <div style={{ background: '#FFFFFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)', display: 'flex', alignItems: 'center' }}>
+                    <div className="bg-split-row" style={{ background: '#FFFFFF', borderRadius: '1rem', padding: '1.5rem', border: '1px solid rgba(0,0,0,0.07)' }}>
                         <div style={{ width: '120px', height: '120px' }}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
@@ -112,7 +112,7 @@ export default function WaterFootprint() {
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
-                        <div style={{ flex: 1, paddingLeft: '1rem' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
                             <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-heading)', margin: '0 0 0.5rem 0' }}>Water Distribution Fate</h3>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                                 {pieData.map((d, i) => (

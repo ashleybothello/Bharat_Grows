@@ -744,7 +744,7 @@ html[data-script="deva"] .auth-lead {
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1023px) {
   .auth-bar-actions {
     display: none;
   }

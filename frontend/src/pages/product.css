@@ -557,6 +557,134 @@ html[data-script="deva"] .az-param label {
   margin-top: 0.45rem;
 }
 
+.stab-card {
+  overflow-x: hidden;
+}
+
+.stab-overall {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  margin: 0.85rem 0 0.7rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.stab-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.stab-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  padding: 0.22rem 0.55rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--line);
+  background: var(--cream, #f6f1e7);
+  color: var(--charcoal, #141c16);
+}
+
+.stab-pill.is-ok {
+  background: #e8f5e9;
+  color: #1b5e20;
+  border-color: #c8e6c9;
+}
+
+.stab-pill.is-mod {
+  background: #fff8e1;
+  color: #8d6e00;
+  border-color: #ffe082;
+}
+
+.stab-pill.is-high {
+  background: #fff3e0;
+  color: #e65100;
+  border-color: #ffcc80;
+}
+
+.stab-pill.is-critical {
+  background: #ffebee;
+  color: #c62828;
+  border-color: #ef9a9a;
+}
+
+.stab-actions-h {
+  margin: 1.1rem 0 0.55rem;
+  font-size: 0.95rem;
+}
+
+.stab-actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stab-actions li {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.65rem;
+  background: var(--surface, #fff);
+}
+
+.stab-action-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--forest, #1b3a2a);
+  margin-bottom: 0.35rem;
+}
+
+.stab-actions p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.stab-why-btn {
+  margin-top: 0.55rem;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--forest, #1b3a2a);
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.stab-why-body {
+  margin-top: 0.45rem !important;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface-alt, #f6f1e7);
+  border-radius: 0.45rem;
+  color: var(--sage) !important;
+  font-size: 0.84rem !important;
+}
+
+.stab-metrics {
+  margin-top: 0.4rem;
+}
+
+@media (max-width: 640px) {
+  .stab-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+
 /* Analyze â€” inline failure notice when the ML service cannot be reached */
 .az-error {
   display: flex;

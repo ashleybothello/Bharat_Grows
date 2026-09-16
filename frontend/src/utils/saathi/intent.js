@@ -10,6 +10,7 @@ import {
   fold,
   refersToPrior,
 } from './places';
+import { readLatestAnalysis } from '../latestAnalysis';
 
 const ROUTES = {
   dashboard: '/app/dashboard',
@@ -54,7 +55,8 @@ const CALENDAR = /crop calendar|calendar|कैलेंडर|कॅलें�
 const WATER_FT = /water footprint|जल पदचिह्न|पाणी/i;
 const SUSTAIN = /sustainab|सतत|टिकाऊ|টেকসই/i;
 const SCHEMES = /scheme|yojana|योजना|প্রকল্প|યોજના|ਸਕੀਮ|திட்டம்|పథకం|ಯೋಜನೆ|പദ്ധതി|ଯୋଜନା|স্কীম|اسکیم/i;
-const EXPORT = /export report|download report|निर्यात|निर्यात/i;
+const STABILIZE = /improve my soil|treat my soil|stabilize my soil|stabilise my soil|fix (my )?soil|what (should|can) i do (for|to|with) (my )?soil|how (do|can) i (improve|treat|fix|stabilize|stabilise) (my )?soil|soil (stabil|remed|home remed)|मिट्टी सुधार|मिट्टी ठीक|माती सुधार|মাটি উন্নত|মাটি ভালো|માટી સુધાર|ਮਿੱਟੀ ਸੁਧਾਰ|மண் மேம்படு|మట్టి మెరుగు|ಮಣ್ಣು ಸುಧಾರ|മണ്ണ് മെച്ച|ମାଟି ଉନ୍ନତ|মাটি উন্নত|مٹی بہتر|مٹی ٹھیک/i;
+
 
 function has(text, re) {
   return re.test(text);
@@ -176,6 +178,18 @@ export function planIntent(message, ctx = {}) {
 
   if (hello) {
     return { mode: 'conversation', intent: 'CONVERSATION', actions: [], message: raw };
+  }
+
+  if (has(raw, STABILIZE) || has(text, STABILIZE)) {
+    const hasAnalysis = Boolean(readLatestAnalysis()?.input);
+    return {
+      mode: 'info',
+      intent: 'SOIL_STABILIZE',
+      actions: hasAnalysis
+        ? [{ type: 'showLatestAnalysis' }, { type: 'openResults' }]
+        : [{ type: 'openAnalyze' }],
+      message: raw,
+    };
   }
 
   if (mentionsMarket || (crop && has(text, /price|mandi|market|भाव|मंडी|बाजार/))) {

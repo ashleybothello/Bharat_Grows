@@ -25,7 +25,7 @@ export default function Navbar() {
 
   useEffect(() => {
     const close = () => {
-      if (window.innerWidth > 860) setOpen(false);
+      if (window.innerWidth > 1023) setOpen(false);
     };
     const onScroll = () => setScrolled(window.scrollY > 18);
     onScroll();

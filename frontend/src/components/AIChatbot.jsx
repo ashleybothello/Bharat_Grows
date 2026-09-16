@@ -379,7 +379,7 @@ const AIChatbot = () => {
   if (hideOn) return null;
 
   return (
-    <div className="saathi-wrap">
+    <div className={`saathi-wrap${isOpen ? ' is-open' : ''}`}>
       <AnimatePresence>
         {isOpen && (
           <motion.div

@@ -1001,7 +1001,7 @@
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1023px) {
   .lp-nav-links,
   .lp-nav-actions > .lp-nav-text {
     display: none;

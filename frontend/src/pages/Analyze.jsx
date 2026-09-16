@@ -10,7 +10,6 @@ import { saveLatestAnalysis } from '../utils/latestAnalysis';
 import { completeAction, emitPageGone, emitPageReady, sleep, subscribeSaathi } from '../utils/saathi/bus';
 import DataBadge from '../components/DataBadge';
 import PageHeader from '../components/PageHeader';
-import { cropLabel, qualityLabel } from './dashboard/helpers';
 
 function resolveCoords(farmer, nodes, sourceScope, sourceNode) {
   if (sourceScope === 'node') {
@@ -360,6 +359,7 @@ const Analyze = () => {
         scope,
         nodeId: scope === 'node' ? nodeId : null,
         device_id: payload.device_id || null,
+        usingSensors: sensorsOn,
       });
       navigate('/app/results', {
         state: {
@@ -370,6 +370,7 @@ const Analyze = () => {
           nodeId: nodeId || null,
           telemetrySnapshot: snapshot,
           rainfallExplicit: rainSet,
+          usingSensors: sensorsOn,
         },
       });
       return result;
@@ -538,7 +539,7 @@ const Analyze = () => {
                     <strong className="tabular">
                       {item.value}{item.unit ? ` ${item.unit}` : ''}
                     </strong>
-                    <em>{qualityLabel(item.status, t)}</em>
+                    <em>{item.status}</em>
                   </li>
                 ))}
               </ul>
@@ -559,7 +560,7 @@ const Analyze = () => {
             >
               {Object.keys(regionPresets).map((key) => (
                 <option key={key} value={key}>
-                  {key ? plainLabel(regionPresets[key].label) : t.analyze_choose_region}
+                  {plainLabel(regionPresets[key].label)}
                 </option>
               ))}
             </select>
@@ -611,7 +612,7 @@ const Analyze = () => {
             >
               {Object.keys(cropPresets).map((key) => (
                 <option key={key} value={key}>
-                  {key ? cropLabel(plainLabel(cropPresets[key].label), t) : t.analyze_choose_crop}
+                  {plainLabel(cropPresets[key].label)}
                 </option>
               ))}
             </select>

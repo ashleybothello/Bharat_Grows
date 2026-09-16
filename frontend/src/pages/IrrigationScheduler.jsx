@@ -4,8 +4,7 @@ import { motion } from 'framer-motion';
 import axios from 'axios';
 import PageHeader from '../components/PageHeader';
 import { useLang } from '../context/LanguageContext';
-
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5005';
+import { API_URL } from '../utils/api';
 
 const MOCK_WEATHER_DATA = {
   success: true,
@@ -37,7 +36,7 @@ export default function IrrigationScheduler() {
   useEffect(() => {
     async function fetchWeather() {
       try {
-        const res = await axios.get(`${BACKEND_URL}/api/weather/forecast`);
+        const res = await axios.get(`${API_URL}/api/weather/forecast`);
         if (res.data?.success) {
           setWeatherData(res.data);
         } else {
@@ -66,7 +65,7 @@ export default function IrrigationScheduler() {
       />
 
       {/* Main Grid: AI Recommendation Banner + Interactive Controls */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+      <div className="bg-fluid-grid" style={{ marginBottom: '2rem' }}>
 
         {/* Recommendation Engine Box */}
         <div style={{
