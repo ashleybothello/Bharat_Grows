@@ -14,6 +14,3 @@ pip install pandas numpy scikit-learn xgboost joblib
 
 ## ▶️ Run
 python main.py
-
-## 👥 Contributors
-- Rohita
